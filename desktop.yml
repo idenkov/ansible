@@ -2,3 +2,4 @@
   roles:
     - role: base
     - role: desktop
+    - role: docker
