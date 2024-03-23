@@ -70,6 +70,7 @@
     group: "{{ remote_user }}"
   loop:
     - "/home/{{ remote_user }}/.config/i3blocks"
+    - "/home/{{ remote_user }}/.config/i3"
 
 - name: Deploy i3 config
   copy:
