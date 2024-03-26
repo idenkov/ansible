@@ -7,3 +7,15 @@
   ansible.builtin.shell: curl -fsSL https://ollama.com/install.sh | sh
   when: "'ollama.service' not in ansible_facts.services"
 
+- name: Install Python packages
+  ansible.builtin.pip:
+    name: 
+      - torch
+      - transformers
+      - transformers[torch]
+    executable: pip3
+    state: present
+    extra_args: --user
+  become: yes
+  become_user: "{{ ansible_env.SUDO_USER | default(ansible_env.USER) }}"
+

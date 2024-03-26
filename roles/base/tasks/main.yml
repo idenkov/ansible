@@ -32,6 +32,7 @@
       - encfs
       - git
       - hexchat
+      - python3-pip
 
 - name: Remove packages
   apt:
