@@ -1,4 +1,11 @@
 ---
-- name: Update apt cache
+
+- name: Run Docker hello-world
+  ansible.builtin.shell: docker run hello-world
+  listen: "Run Docker hello-world"
+
+- name: Install prerequisites
   apt:
     update_cache: yes
+    name: ca-certificates,curl
+    state: present
