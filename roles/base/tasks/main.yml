@@ -127,5 +127,3 @@
   become_user: "{{ remote_user }}"
   ignore_errors: true
 
-- name: Include synchting
-  ansible.builtin.include_tasks: syncthing.yml
