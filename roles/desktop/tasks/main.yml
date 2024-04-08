@@ -3,6 +3,11 @@
 - name: Gather service facts
   ansible.builtin.service_facts:
 
+- name: Install steam
+  ansible.builtin.package:
+    name: steam
+    state: present
+
 - name: Install Ollama
   ansible.builtin.shell: curl -fsSL https://ollama.com/install.sh | sh
   when: "'ollama.service' not in ansible_facts.services"
