@@ -33,6 +33,7 @@
       - git
       - hexchat
       - python3-pip
+      - ethtool
 
 - name: Remove packages
   apt:

@@ -12,6 +12,37 @@
   ansible.builtin.shell: curl -fsSL https://ollama.com/install.sh | sh
   when: "'ollama.service' not in ansible_facts.services"
 
+- name: Determine default network interface
+  set_fact:
+    default_interface: "{{ ansible_default_ipv4.interface }}"
+  when: ansible_default_ipv4.interface is defined
+
+- name: Enable WoL
+  command: ethtool -s {{default_interface }} wol g
+  args:
+    warn: false
+  when: default_interface is defined
+
+- name: Ensure Wake on LAN persists after reboot
+  copy:
+    dest: /etc/network/if-up.d/wol
+    content: |
+      #!/bin/sh
+      ethtool -s {{ default_interface }} wol g
+    mode: '0755'
+    when: default_interface is defined
+
+- name: Check if script is in place (optional)
+  stat:
+    path: /etc/network/if-up.d/wol
+  register: script_check
+  when: default_interface is defined
+
+- name: Output script status
+  debug:
+    msg: "Script is in place and executable."
+  when: script_check.stat.exists and script_check.stat.mode == '0755' and default_interface is defined
+
 - name: Install Python packages
   ansible.builtin.pip:
     name: 
@@ -24,3 +55,18 @@
   become: yes
   become_user: "{{ ansible_env.SUDO_USER | default(ansible_env.USER) }}"
 
+- name: Download and add the Spotify repository key
+  apt_key:
+    url: https://download.spotify.com/debian/pubkey_6224F9941A8AA6D1.gpg
+    state: present
+
+- name: Add Spotify repository
+  apt_repository:
+    repo: 'deb http://repository.spotify.com stable non-free'
+    state: present
+    filename: spotify
+
+- name: Update apt cache and install Spotify client
+  apt:
+    name: spotify-client
+    state: present
