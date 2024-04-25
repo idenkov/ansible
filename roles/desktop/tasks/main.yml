@@ -22,7 +22,7 @@
     volumes:
       - "open-webui:/app/backend/data"
     env:
-      OLLAMA_BASE_URL: "http://127.0.0.11434"
+      OLLAMA_BASE_URL: "http://127.0.0.1:11434"
     detach: yes
   ignore_errors: yes
 
