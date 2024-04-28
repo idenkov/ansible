@@ -23,6 +23,7 @@
       - "open-webui:/app/backend/data"
     env:
       OLLAMA_BASE_URL: "http://127.0.0.1:11434"
+      OPENAI_API_KEY: "{{ openai_api }}"
     detach: yes
   ignore_errors: yes
 
