@@ -1,3 +1,5 @@
 - hosts: all
+  vars_files:
+    - ansible-vault/secrets.txt
   roles:
     - role: server
