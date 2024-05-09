@@ -16,9 +16,8 @@
       - htop
       - i3
       - i3blocks
-      - compton
+      - picom
       - xautolock
-      - compton
       - suckless-tools
       - lxappearance
       - gparted
@@ -86,14 +85,6 @@
   copy:
     src: files/i3blocks.conf
     dest: "/home/{{ remote_user }}/.config/i3blocks/i3blocks.conf"
-    owner: "{{ remote_user }}"
-    group: "{{ remote_user }}"
-    mode: 0644
-
-- name: Deploy compton config
-  copy:
-    src: files/compton.conf
-    dest: "/home/{{ remote_user }}/.config/compton.conf"
     owner: "{{ remote_user }}"
     group: "{{ remote_user }}"
     mode: 0644
