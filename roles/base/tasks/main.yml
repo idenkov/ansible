@@ -90,6 +90,15 @@
     group: "{{ remote_user }}"
     mode: 0644
 
+
+- name: Deploy picom config
+  copy:
+    src: files/picom.conf
+    dest: "/home/{{ remote_user }}/.config/picom/picom.conf"
+    owner: "{{ remote_user }}"
+    group: "{{ remote_user }}"
+    mode: 0644
+
 - name: Deploy vim config
   copy:
     src: files/vim.conf
