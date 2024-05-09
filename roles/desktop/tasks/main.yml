@@ -12,6 +12,16 @@
   ansible.builtin.shell: curl -fsSL https://ollama.com/install.sh | sh
   when: "'ollama.service' not in ansible_facts.services"
 
+- name: Add OLLAMA_HOST environment variable to ollama.service
+  ansible.builtin.lineinfile:
+    path: /etc/systemd/system/ollama.service
+    insertafter: '^\[Service\]$'
+    line: 'Environment="OLLAMA_HOST=0.0.0.0"'
+    state: present
+  notify:
+    - Reload systemd
+    - Restart ollama service
+
 - name: Determine default network interface
   set_fact:
     default_interface: "{{ ansible_default_ipv4.interface }}"

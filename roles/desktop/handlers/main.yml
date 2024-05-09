@@ -1,0 +1,10 @@
+---
+
+- name: Reload systemd
+  systemd:
+    daemon_reload: yes
+
+- name: Restart ollama service
+  systemd:
+    name: ollama.service
+    state: restarted
