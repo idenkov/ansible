@@ -120,3 +120,25 @@
   become_user: "{{ remote_user }}"
   ignore_errors: true
 
+- name: env variable for kitty janky ssh behaviour
+  lineinfile:
+    path: "/home/{{ remote_user }}/.bashrc"
+    line: 'export TERM="xterm-256color"'
+    create: no
+    state: present
+    insertafter: EOF
+
+- name: Clone kitty themes repository
+  git:
+    repo: 'https://github.com/dexpota/kitty-themes.git'
+    dest: "/home/{{ remote_user }}/.config/kitty/kitty-themes"
+    depth: 1
+    clone: yes
+    update: no
+
+- name: Apply kitty theme
+  file:
+    src: "/home/{{ remote_user }}/.config/kitty/kitty-themes/themes/Misterioso.conf"
+    dest: "/home/{{ remote_user }}/.config/kitty/theme.conf"
+    state: link
+    force: yes

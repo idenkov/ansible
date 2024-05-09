@@ -5,13 +5,7 @@
   register: docker_installed
   failed_when: false
   changed_when: false
-
-- name: Add the current user to the Docker group
-  user:
-    name: "{{ ansible_env.SUDO_USER or ansible_user_id }}"
-    groups:
-      - docker
-    append: yes
+  ignore_errors: true
 
 - name: Install Python packages for docker
   ansible.builtin.pip:
@@ -50,3 +44,11 @@
     update_cache: yes
   when: docker_installed.rc != 0
   notify: Run Docker hello-world
+
+- name: Add the current user to the Docker group
+  user:
+    name: "{{ ansible_env.SUDO_USER or ansible_user_id }}"
+    groups:
+      - docker
+    append: yes
+
