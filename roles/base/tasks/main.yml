@@ -23,6 +23,7 @@
       - lxappearance
       - gparted
       - synaptic
+      - ncdu
       - curl
       - whois
       - net-tools
