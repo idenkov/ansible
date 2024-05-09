@@ -30,7 +30,7 @@
       #!/bin/sh
       ethtool -s {{ default_interface }} wol g
     mode: '0755'
-    when: default_interface is defined
+  when: default_interface is defined
 
 - name: Check if script is in place (optional)
   stat:
