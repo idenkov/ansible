@@ -13,6 +13,7 @@
       - docker
     executable: pip3
     state: present
+  when: docker_installed.rc != 0
 
 - name: Create Docker's apt keyring directory
   ansible.builtin.file:
@@ -51,4 +52,5 @@
     groups:
       - docker
     append: yes
+  when: docker_installed.rc != 0
 
