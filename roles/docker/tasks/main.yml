@@ -48,7 +48,7 @@
 
 - name: Add the current user to the Docker group
   user:
-    name: "{{ ansible_env.SUDO_USER or ansible_user_id }}"
+    name: "{{ remote_user }}"
     groups:
       - docker
     append: yes
