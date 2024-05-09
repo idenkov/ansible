@@ -17,6 +17,7 @@
       - i3
       - i3blocks
       - picom
+      - kitty
       - xautolock
       - suckless-tools
       - lxappearance
