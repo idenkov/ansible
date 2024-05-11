@@ -1,5 +1,9 @@
 ---
 
+- name: Add repos
+  apt_repository:
+    repo: 'ppa:jonaski/strawberry'
+
 - name: Run "apt update"
   apt:
     update_cache: yes
@@ -33,7 +37,7 @@
       - encfs
       - git
       - hexchat
-      - clementine
+      - strawberry
       - python3-pip
       - ethtool
 

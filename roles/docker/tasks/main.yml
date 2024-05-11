@@ -36,7 +36,6 @@
   args:
     executable: /bin/bash
   when: docker_installed.rc != 0
-  notify: Update apt cache
 
 - name: Install Docker packages
   apt:
