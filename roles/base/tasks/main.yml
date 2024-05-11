@@ -33,6 +33,7 @@
       - encfs
       - git
       - hexchat
+      - clementine
       - python3-pip
       - ethtool
 
