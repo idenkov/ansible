@@ -14,3 +14,12 @@
       OPENAI_API_KEY: "{{ openai_api }}"
     detach: yes
   ignore_errors: yes
+
+- name: Run redis container
+  community.docker.docker_container:
+    name: redis
+    image: redis:7.2
+    state: started
+    restart_policy: always
+    network_mode: host
+    detach: yes
