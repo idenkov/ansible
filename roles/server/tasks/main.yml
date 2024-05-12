@@ -23,3 +23,21 @@
     restart_policy: always
     network_mode: host
     detach: yes
+
+- name: Nginx ollama proxy
+  vars:
+    domain_name: {{ llm_domain }}
+    host: localhost
+    port: 8080
+  template:
+    src: /path/to/nginx_template.j2
+    dest: /etc/nginx/conf.d/sites-enabled/{{ domain_name }}.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Nginx reload
+
+- name: Install Let's Encrypt certificate
+  command: "certbot certonly --nginx -d {{ llm_domain }} --no-eff-email --agree-tos"
+  notify: Nginx reload
+
