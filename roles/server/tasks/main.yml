@@ -26,18 +26,18 @@
 
 - name: Nginx ollama proxy
   vars:
-    domain_name: {{ llm_domain }}
+    domain_name: "{{ llm_domain }}"
     host: localhost
     port: 8080
   template:
-    src: /path/to/nginx_template.j2
-    dest: /etc/nginx/conf.d/sites-enabled/{{ domain_name }}.conf
+    src: "files/nginx_proxy.j2"
+    dest: "/etc/nginx/sites-enabled/{{ domain_name }}"
     owner: root
     group: root
     mode: '0644'
   notify: Nginx reload
 
 - name: Install Let's Encrypt certificate
-  command: "certbot certonly --nginx -d {{ llm_domain }} --no-eff-email --agree-tos"
+  command: "certbot certonly -n --webroot -w /var/www/html --no-eff-email --agree-tos -d {{ llm_domain }}"
   notify: Nginx reload
 
