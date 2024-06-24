@@ -8,7 +8,7 @@
     name: steam
     state: present
 
-- name: Install apte packages
+- name: Install apt packages
   apt:
     update_cache: yes
     pkg:
