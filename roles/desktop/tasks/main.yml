@@ -8,6 +8,13 @@
     name: steam
     state: present
 
+- name: Install apte packages
+  apt:
+    update_cache: yes
+    pkg:
+      - vlc
+      - spotify-client
+
 - name: Install Ollama
   ansible.builtin.shell: curl -fsSL https://ollama.com/install.sh | sh
   when: "'ollama.service' not in ansible_facts.services"
@@ -76,8 +83,4 @@
     state: present
     filename: spotify
 
-- name: Update apt cache and install Spotify client
-  apt:
-    name: spotify-client
-    state: present
 
