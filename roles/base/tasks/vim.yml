@@ -1,0 +1,31 @@
+---
+
+- name: Deploy vim config
+  copy:
+    src: "{{ playbook_dir }}/roles/base/files/vim.conf"
+    dest: "/home/{{ remote_user }}/.vimrc"
+    owner: "{{ remote_user }}"
+    group: "{{ remote_user }}"
+    mode: 0644
+
+- name: Clone Vundle for vim plugins
+  ansible.builtin.git:
+    repo: 'https://github.com/gmarik/Vundle.vim.git'
+    dest: "/home/{{ remote_user }}/.vim/bundle/Vundle.vim"
+    update: yes
+
+- name: Recursively change ownership
+  file:
+    path: "/home/{{ remote_user }}/.vim/"
+    state: directory
+    recurse: yes
+    owner: "{{ remote_user }}"
+    group: "{{ remote_user }}"
+
+- name: Install vundle plugins
+  shell: 
+    cmd: |
+      vim -E -s -c "source ~/.vimrc" -c PluginInstall -c qa
+  become: true
+  become_user: "{{ remote_user }}"
+  ignore_errors: true

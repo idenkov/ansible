@@ -1,5 +1,12 @@
 ---
 
+- name: Get the non root remote user
+  set_fact:
+    remote_user: "{{ ansible_env.SUDO_USER or ansible_user_id }}"
+
+- name: Import vim configuration
+  import_tasks: "{{ playbook_dir }}/roles/base/tasks/vim.yml"
+
 - name: Run the Ollama/Open-WebUI container
   community.docker.docker_container:
     name: open-webui

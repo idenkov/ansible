@@ -1,0 +1,64 @@
+---
+
+- name: Run "apt update"
+  apt:
+    update_cache: yes
+
+- name: Update all packages to their latest version
+  apt:
+    name: "*"
+    state: latest
+
+- name: Install baseline packages
+  apt:
+    pkg:
+      - vim
+      - htop
+      - i3
+      - i3blocks
+      - picom
+      - kitty
+      - xautolock
+      - suckless-tools
+      - lxappearance
+      - gparted
+      - synaptic
+      - ncdu
+      - curl
+      - whois
+      - net-tools
+      - pcmanfm
+      - nextcloud-desktop
+      - sirikali
+      - encfs
+      - git
+      - hexchat
+      - strawberry
+      - python3-pip
+      - ethtool
+      - shutter
+
+- name: Remove packages
+  apt:
+    pkg:
+      - rhythmbox
+      - gnome-games
+      - aisleriot
+      - four-in-a-row
+      - gnome-chess
+      - gnome-sudoku
+      - gnome-taquin
+      - gnome-tetravex
+      - hoichess
+      - lightsoff
+      - quadrapassel
+      - swell-foop
+    state: absent
+
+- name: Clean up downloaded packages
+  ansible.builtin.apt:
+    autoclean: yes
+
+- name: Remove old dependencies
+  ansible.builtin.apt:
+    autoremove: yes
