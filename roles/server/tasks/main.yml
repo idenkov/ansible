@@ -7,6 +7,20 @@
 - name: Import vim configuration
   import_tasks: "{{ playbook_dir }}/roles/base/tasks/vim.yml"
 
+- name: Run Portainer container
+  community.docker.docker_container:
+    name: portainer
+    image: portainer/portainer-ce
+    state: started
+    restart_policy: unless-stopped
+    ports:
+      - "8000:8000"
+      - "9000:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    detach: true
+
 - name: Run the Ollama/Open-WebUI container
   community.docker.docker_container:
     name: open-webui
@@ -21,6 +35,43 @@
       OPENAI_API_KEY: "{{ openai_api }}"
     detach: yes
   ignore_errors: yes
+
+  #- name: Run BIND container
+  #  community.docker.docker_container:
+  #    name: bind
+  #    image: sameersbn/bind:latest
+  #    state: started
+  #    restart_policy: unless-stopped
+  #    ports:
+  #      - "53:53"
+  #      - "53:53/udp"
+  #    detach: true
+
+- name: Grafana container
+  community.docker.docker_container:
+    name: grafana
+    image: grafana/grafana-enterprise
+    state: started
+    restart_policy: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-storage:/var/lib/grafana
+    detach: true
+
+- name: Run Prometheus container
+  community.docker.docker_container:
+    name: prometheus
+    image: prom/prometheus
+    state: started
+    restart_policy: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - /home/{{ remote_user }}/.config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    detach: true
+    pull: yes
+
 
 - name: Run redis container
   community.docker.docker_container:
