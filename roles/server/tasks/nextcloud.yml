@@ -1,0 +1,60 @@
+---
+
+- name: Create Docker Compose file
+  copy:
+    dest: "{{ compose_file_path }}"
+    force: no
+    content: |
+      version: '3.7'
+      services:
+        nextcloud:
+          image: nextcloud:fpm
+          container_name: nextcloud
+          restart: always
+          volumes:
+            - "{{ nc_data_path }}:/var/www/html"
+            - "{{ nc_config_path }}:/var/www/html/config"
+          environment:
+            - MYSQL_HOST="{{ nc_host }}"
+            - MYSQL_DATABASE="{{ nc_db }}"
+            - MYSQL_USER="{{ nc_user }}"
+            - MYSQL_PASSWORD="{{ nc_pass }}"
+          expose:
+            - "9000"
+          networks:
+            - nextcloud_net
+
+        db:
+          image: mariadb
+          container_name: nextcloud-db
+          restart: always
+          environment:
+            - MARIADB_ROOT_HOST="%"
+            - MARIADB_ROOT_PASSWORD="{{ nc_root_pass }}"
+            - MARIADB_DATABASE="{{ nc_db }}"
+            - MARIADB_USER="{{ nc_user}}"
+            - MARIADB_PASSWORD="{{ nc_pass }}"
+          volumes:
+            - "{{ nc_db_path }}:/var/lib/mysql"
+
+          ports:
+            - "3307:3306"
+          networks:
+            - nextcloud_net
+
+      networks:
+        nextcloud_net:
+          driver: bridge
+
+  no_log: true
+
+- name: Start Nextcloud stack using Docker Compose
+  become: true
+  command: docker-compose -f "{{ compose_file_path }}" -p nextcloud_stack up -d
+  args:
+    chdir: "{{ compose_file_path | dirname }}"
+
+- name: Remove temporary Docker Compose file
+  file:
+    path: "{{ compose_file_path }}"
+    state: absent

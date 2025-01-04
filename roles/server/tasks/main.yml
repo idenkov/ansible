@@ -7,6 +7,19 @@
 - name: Import vim configuration
   import_tasks: "{{ playbook_dir }}/roles/base/tasks/vim.yml"
 
+- name: Ensure Docker Python SDK and Docker Compose are installed
+  become: true
+  ansible.builtin.pip:
+    name:
+      - docker
+      - docker-compose
+    state: present
+    executable: /usr/bin/pip3  # Ensure the correct pip version is used
+
+
+- name: Import nextcloud docker compose
+  import_tasks: "{{ playbook_dir }}/roles/server/tasks/nextcloud.yml"
+
 - name: Run Portainer container
   community.docker.docker_container:
     name: portainer

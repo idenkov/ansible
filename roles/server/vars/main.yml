@@ -1,2 +1,5 @@
 ---
-# vars file for server
+compose_file_path: "{{ playbook_dir }}/roles/server/files/docker-compose.yml"
+nc_data_path: /var/www/nextcloud
+nc_db_path: /var/www/db/mysql
+nc_config_path: /var/www/nextcloud/config
