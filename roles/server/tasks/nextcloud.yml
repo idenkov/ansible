@@ -25,7 +25,7 @@
             - nextcloud_net
 
         db:
-          image: mariadb
+          image: mariadb:10.5.27
           container_name: nextcloud-db
           restart: always
           environment:
@@ -38,7 +38,7 @@
             - "{{ nc_db_path }}:/var/lib/mysql"
 
           ports:
-            - "3307:3306"
+            - "3306:3306"
           networks:
             - nextcloud_net
 
