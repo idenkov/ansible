@@ -1,0 +1,114 @@
+#!/bin/bash
+# Managed by Ansible - roles/server/files/nextcloud-sqldump.sh.j2. Do not edit in place.
+#
+#   sudo {{ nc_sqldump_script }} --dry-run
+#   sudo {{ nc_sqldump_script }}
+#
+#   Restore with:  zcat {{ nc_sqldump_db }}-YYYY-MM-DD.sql.gz | mariadb {{ nc_sqldump_db }}
+
+set -euo pipefail
+
+DB={{ nc_sqldump_db }}
+DEST={{ nc_sqldump_dir }}
+KEEP={{ nc_sqldump_keep }}
+MIN_BYTES=$(({{ nc_sqldump_min_mb }} * 1024 * 1024))
+GZIP_LEVEL={{ nc_sqldump_gzip_level }}
+LOCKFILE=/run/lock/nextcloud-sqldump.lock
+
+DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1
+[ "$(id -u)" -eq 0 ] || { echo "run me with sudo" >&2; exit 1; }
+
+say() { echo "  $*"; }
+die() { echo "FAILED: $*" >&2; exit 1; }
+
+# pigz is multi-threaded and emits an ordinary gzip stream.
+if command -v pigz >/dev/null; then
+    COMPRESSOR=(pigz -"$GZIP_LEVEL" -c)
+else
+    COMPRESSOR=(gzip -"$GZIP_LEVEL" -c)
+fi
+
+echo "=============================================================="
+echo " NEXTCLOUD SQL DUMP$([ $DRY -eq 1 ] && echo '  (dry run)')"
+echo "=============================================================="
+say "database:     $DB"
+say "destination:  $DEST"
+say "retention:    $KEEP most recent"
+say "compressor:   ${COMPRESSOR[0]} -$GZIP_LEVEL"
+say "date:         $(date -Is)"
+echo
+
+command -v mariadb-dump >/dev/null || die "mariadb-dump not found"
+
+mountpoint -q {{ nc_sqldump_mount }} || die "{{ nc_sqldump_mount }} is not mounted - refusing to write to the root fs"
+
+mariadb -N -e "SELECT 1" "$DB" >/dev/null 2>&1 || die "cannot reach database '$DB' (is mariadb up?)"
+
+if [ $DRY -eq 1 ]; then
+    say "would create:  $DEST"
+    say "would dump to: $DEST/${DB}-$(date +%F).sql.gz"
+    echo
+    say "existing backups:"
+    ls -1sh "$DEST"/${DB}-*.sql.gz 2>/dev/null | sed 's/^/    /' || say "    (none yet)"
+    exit 0
+fi
+
+mkdir -p "$DEST"
+
+exec 9>"$LOCKFILE"
+flock -n 9 || die "another run is still in progress (lock: $LOCKFILE)"
+
+STAMP=$(date +%F)
+FINAL="$DEST/${DB}-${STAMP}.sql.gz"
+TMP=$(mktemp "$DEST/.${DB}-${STAMP}.XXXXXX.tmp")   # same fs as FINAL, so mv is atomic
+# Report how far we got before cleaning up, otherwise a failure leaves nothing
+# to diagnose from.
+trap 'rc=$?; if [ $rc -ne 0 ] && [ -f "$TMP" ]; then echo "  partial output was $(stat -c %s "$TMP") bytes" >&2; fi; rm -f "$TMP"' EXIT
+
+say "dumping..."
+# pipefail matters here: gzip exits 0 on a truncated stream.
+if ! mariadb-dump \
+        --single-transaction \
+        --quick \
+        --routines --triggers --events \
+        --default-character-set=utf8mb4 \
+        "$DB" | "${COMPRESSOR[@]}" > "$TMP"; then
+    die "mariadb-dump pipeline failed - previous backups left untouched"
+fi
+
+say "verifying..."
+gzip -t "$TMP" || die "gzip reports the archive is corrupt"
+
+SIZE=$(stat -c %s "$TMP")
+[ "$SIZE" -ge "$MIN_BYTES" ] || die "dump is only $SIZE bytes (floor is $MIN_BYTES) - treating as failure"
+
+# The trailer is the cheap proof the dump completed rather than dying mid-table.
+zcat "$TMP" | tail -c 512 | grep -q -- '-- Dump completed' \
+    || die "no '-- Dump completed' trailer - the dump is truncated"
+
+PREV=$(ls -1 "$DEST"/${DB}-*.sql.gz 2>/dev/null | sort -r | head -1 || true)
+if [ -n "$PREV" ] && [ "$PREV" != "$FINAL" ]; then
+    PSIZE=$(stat -c %s "$PREV")
+    if [ "$PSIZE" -gt 0 ] && [ $((SIZE * 2)) -lt "$PSIZE" ]; then
+        echo "  WARNING: this dump ($SIZE b) is less than half the previous one ($PSIZE b)"
+    fi
+fi
+
+chmod 600 "$TMP"
+mv -f "$TMP" "$FINAL"
+trap - EXIT
+say "wrote $FINAL ($(numfmt --to=iec "$SIZE"))"
+
+# Prune by count, not age: a missed week must never cascade into deleting
+# backups that are still good.
+mapfile -t STALE < <(ls -1 "$DEST"/${DB}-*.sql.gz 2>/dev/null | sort -r | tail -n +$((KEEP + 1)))
+for f in "${STALE[@]}"; do
+    say "pruning $(basename "$f")"
+    rm -f -- "$f"
+done
+
+echo
+say "kept $(ls -1 "$DEST"/${DB}-*.sql.gz 2>/dev/null | wc -l) backups:"
+ls -1sh "$DEST"/${DB}-*.sql.gz | sed 's/^/    /'
+echo
+echo "OK"

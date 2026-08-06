@@ -1,0 +1,112 @@
+#!/bin/bash
+# Managed by Ansible - roles/server/files/duplicacy-backup.sh.j2. Do not edit in place.
+#
+#   sudo {{ duplicacy_script }} --dry-run
+#   sudo {{ duplicacy_script }}
+#   sudo {{ duplicacy_script }} --prune
+#
+# The .duplicacy config dir and the repository are in different places, so
+# duplicacy must be invoked from {{ duplicacy_pref_home }}, not from the repository.
+
+set -euo pipefail
+
+PREF_HOME={{ duplicacy_pref_home }}
+REPO={{ duplicacy_repo }}
+ENVFILE={{ duplicacy_envfile }}
+LOCKFILE=/run/lock/duplicacy-nextcloud.lock
+THREADS={{ duplicacy_threads }}
+
+KEEP_POLICY=({{ duplicacy_keep_policy }})
+
+MODE=backup
+case "${1:-}" in
+    --dry-run)       MODE=dryrun   ;;  # enumerate what would be uploaded
+    --prune)         MODE=prune    ;;  # backup, then really delete old snapshots
+    --prune-dry-run) MODE=prunedry ;;  # show what prune WOULD delete, delete nothing
+    "")              ;;
+    *)               echo "unknown option: $1" >&2; exit 2 ;;
+esac
+
+[ "$(id -u)" -eq 0 ] || { echo "run me with sudo" >&2; exit 1; }
+
+say() { echo "  $*"; }
+die() { echo "FAILED: $*" >&2; exit 1; }
+
+echo "=============================================================="
+echo " DUPLICACY BACKUP - nextcloud data  (mode: $MODE)"
+echo "=============================================================="
+say "repository:  $REPO"
+say "date:        $(date -Is)"
+echo
+
+# systemd runs with a minimal PATH, so do not rely on it finding the binary.
+DUPLICACY=$(command -v duplicacy || true)
+if [ -z "$DUPLICACY" ]; then
+    for c in {{ duplicacy_bin_candidates }}; do
+        [ -x "$c" ] && { DUPLICACY="$c"; break; }
+    done
+fi
+[ -n "$DUPLICACY" ] || die "duplicacy binary not found - set duplicacy_bin_candidates in vars"
+say "binary:      $DUPLICACY"
+
+[ -d "$PREF_HOME/.duplicacy" ] || die "$PREF_HOME/.duplicacy missing"
+
+# /mnt/ncloud is mounted nofail, so it can be absent after a boot. Backing up an
+# empty mountpoint would record a snapshot in which every file vanished, and the
+# prune below would then age out the real history.
+mountpoint -q {{ duplicacy_repo_mount }} || die "{{ duplicacy_repo_mount }} is not mounted - refusing to back up an empty directory"
+[ -d "$REPO" ] || die "$REPO does not exist"
+
+ENTRIES=$(find "$REPO" -maxdepth 1 -mindepth 1 | wc -l)
+[ "$ENTRIES" -ge 3 ] || die "$REPO has only $ENTRIES entries - refusing to back up what looks like an empty mount"
+
+if [ -f "$ENVFILE" ]; then
+    PERM=$(stat -c %a "$ENVFILE")
+    [ "$PERM" = "600" ] || echo "  WARNING: $ENVFILE is mode $PERM, should be 600"
+    set -a; . "$ENVFILE"; set +a
+    say "credentials: loaded from $ENVFILE"
+    for v in DUPLICACY_B2_ID DUPLICACY_B2_KEY DUPLICACY_PASSWORD; do
+        [ -n "${!v:-}" ] || die "$v is empty in $ENVFILE - duplicacy would block on a prompt"
+    done
+elif [ -t 0 ]; then
+    say "credentials: no $ENVFILE - duplicacy will prompt"
+else
+    # Without this the service unit, which has TimeoutStartSec=infinity, would
+    # sit on a password prompt forever and hold the lock against every later run.
+    die "no $ENVFILE and no tty - duplicacy would block on a password prompt"
+fi
+
+exec 9>"$LOCKFILE"
+flock -n 9 || die "another duplicacy run is still in progress"
+
+cd "$PREF_HOME"
+
+if [ "$MODE" = dryrun ]; then
+    say "enumerating (nothing will be uploaded)..."
+    exec "$DUPLICACY" backup -dry-run -stats
+fi
+
+# Shows which snapshots the retention policy would remove. Deletes nothing, and
+# never runs a backup first, so it is safe against a live storage.
+if [ "$MODE" = prunedry ]; then
+    say "prune DRY RUN - nothing will be deleted"
+    say "policy: ${KEEP_POLICY[*]}"
+    exec "$DUPLICACY" prune -dry-run "${KEEP_POLICY[@]}"
+fi
+
+say "backing up..."
+"$DUPLICACY" backup -stats -threads "$THREADS" || die "backup failed - NOT pruning"
+
+if [ "$MODE" = prune ]; then
+    echo
+    say "pruning: ${KEEP_POLICY[*]}"
+    # Only after a successful backup. Pruning on a night the backup failed is
+    # how a retention policy quietly eats history.
+    "$DUPLICACY" prune "${KEEP_POLICY[@]}" || die "prune failed (backup itself was OK)"
+fi
+
+echo
+say "current snapshots:"
+"$DUPLICACY" list | tail -5 | sed 's/^/    /'
+echo
+echo "OK"

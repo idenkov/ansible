@@ -1,5 +1,31 @@
 ---
 compose_file_path: "{{ playbook_dir }}/roles/server/files/docker-compose.yml"
-nc_data_path: /var/www/nextcloud
-nc_db_path: /var/www/db/mysql
+nc_data_path: /mnt/ncloud/owncloud 
+nc_db_path: /var/lib/mysql
 nc_config_path: /var/www/nextcloud/config
+
+# --- backups ---------------------------------------------------------------
+
+# Weekly DB dump. Lands on sdc, deliberately not on sda1 where the data it
+# protects lives.
+nc_sqldump_script: /usr/local/sbin/nextcloud-sqldump.sh
+nc_sqldump_db: nextcloud
+nc_sqldump_dir: /mnt/backups/mysql
+nc_sqldump_mount: /mnt/backups
+nc_sqldump_keep: 8
+nc_sqldump_min_mb: 10
+nc_sqldump_gzip_level: 9
+nc_sqldump_oncalendar: "Tue *-*-* 04:02:00"
+duplicacy_script: /usr/local/sbin/duplicacy-backup.sh
+duplicacy_bin_candidates: "/root/duplicacy /root/bin/duplicacy /usr/local/bin/duplicacy /opt/duplicacy/duplicacy"
+duplicacy_pref_home: /root
+duplicacy_repo: /mnt/ncloud/owncloud
+duplicacy_repo_mount: /mnt/ncloud
+duplicacy_envfile: /root/.duplicacy/env
+duplicacy_threads: 4
+# Nothing currently in the storage is older than 1825 days, so this deletes
+# nothing today.
+duplicacy_keep_policy: "-keep 0:3650 -keep 30:1825"
+duplicacy_backup_oncalendar: "Wed *-*-* 02:30:00"
+duplicacy_prune_oncalendar: "Sun *-*-01..07 05:00:00"
+duplicacy_timers_enabled: true

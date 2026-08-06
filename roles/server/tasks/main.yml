@@ -17,8 +17,9 @@
     executable: /usr/bin/pip3  # Ensure the correct pip version is used
 
 
-- name: Import nextcloud docker compose
-  import_tasks: "{{ playbook_dir }}/roles/server/tasks/nextcloud.yml"
+- name: Import backup jobs
+  import_tasks: "{{ playbook_dir }}/roles/server/tasks/backup.yml"
+  tags: backup
 
 - name: Run Portainer container
   community.docker.docker_container:
@@ -28,11 +29,12 @@
     restart_policy: unless-stopped
     ports:
       - "8000:8000"
-      - "9000:9000"
+      - "9443:9443"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data
     detach: true
+  ignore_errors: yes
 
 - name: Run the Ollama/Open-WebUI container
   community.docker.docker_container:
@@ -47,6 +49,7 @@
       OLLAMA_BASE_URL: "http://{{ llm_address }}:11434"
       OPENAI_API_KEY: "{{ openai_api }}"
     detach: yes
+    pull_policy: always
   ignore_errors: yes
 
   #- name: Run BIND container

@@ -1,0 +1,194 @@
+---
+
+
+- name: Install the Nextcloud SQL dump script
+  become: true
+  template:
+    src: "files/nextcloud-sqldump.sh.j2"
+    dest: "{{ nc_sqldump_script }}"
+    owner: root
+    group: root
+    mode: '0750'
+
+- name: Install the Nextcloud SQL dump service unit
+  become: true
+  copy:
+    dest: /etc/systemd/system/nextcloud-sqldump.service
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Weekly Nextcloud database dump
+      After=mariadb.service {{ nc_sqldump_mount | regex_replace('^/', '') | regex_replace('/', '-') }}.mount
+
+      [Service]
+      Type=oneshot
+      ExecStart={{ nc_sqldump_script }}
+      Nice=10
+      IOSchedulingClass=idle
+  notify: Reload systemd
+
+- name: Install the Nextcloud SQL dump timer unit
+  become: true
+  copy:
+    dest: /etc/systemd/system/nextcloud-sqldump.timer
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Weekly Nextcloud database dump
+
+      [Timer]
+      OnCalendar={{ nc_sqldump_oncalendar }}
+      Persistent=true
+      RandomizedDelaySec=15m
+
+      [Install]
+      WantedBy=timers.target
+  notify: Reload systemd
+
+# Skipped under --check: the unit file is not on disk in check mode, so systemd
+# would fail looking it up and abort the rest of the dry run.
+- name: Enable the Nextcloud SQL dump timer
+  become: true
+  systemd:
+    name: nextcloud-sqldump.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: not ansible_check_mode
+
+- name: Install the duplicacy backup script
+  become: true
+  template:
+    src: "files/duplicacy-backup.sh.j2"
+    dest: "{{ duplicacy_script }}"
+    owner: root
+    group: root
+    mode: '0750'
+
+# credentials have to come from the environment.
+- name: Install the duplicacy credentials file
+  become: true
+  copy:
+    dest: "{{ duplicacy_envfile }}"
+    owner: root
+    group: root
+    mode: '0600'
+    # Both naming forms are written because duplicacy may look credentials up
+    # per-storage. The storage in preferences is named "default", and it is not
+    # documented whether that maps to the bare name or to DUPLICACY_DEFAULT_*.
+    # Setting both costs nothing and removes the guesswork.
+    # Values are single-quoted so a key containing # or $ cannot break sourcing.
+    content: |
+      DUPLICACY_PASSWORD='{{ duplicacy_password }}'
+      DUPLICACY_B2_ID='{{ duplicacy_b2_id }}'
+      DUPLICACY_B2_KEY='{{ duplicacy_b2_key }}'
+      DUPLICACY_DEFAULT_PASSWORD='{{ duplicacy_password }}'
+      DUPLICACY_DEFAULT_B2_ID='{{ duplicacy_b2_id }}'
+      DUPLICACY_DEFAULT_B2_KEY='{{ duplicacy_b2_key }}'
+  no_log: true
+  when: duplicacy_password is defined
+
+- name: Install the duplicacy backup service unit
+  become: true
+  copy:
+    dest: /etc/systemd/system/duplicacy-nextcloud.service
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Duplicacy backup of Nextcloud data to B2
+      After=network-online.target {{ duplicacy_repo_mount | regex_replace('^/', '') | regex_replace('/', '-') }}.mount
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart={{ duplicacy_script }}
+      TimeoutStartSec=infinity
+      # No stdin: with an infinite timeout, a duplicacy password prompt would
+      # otherwise hang forever holding the lock. Fail fast instead.
+      StandardInput=null
+      Nice=15
+      IOSchedulingClass=idle
+  notify: Reload systemd
+
+- name: Install the duplicacy backup timer unit
+  become: true
+  copy:
+    dest: /etc/systemd/system/duplicacy-nextcloud.timer
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Weekly duplicacy backup of Nextcloud data
+
+      [Timer]
+      OnCalendar={{ duplicacy_backup_oncalendar }}
+      Persistent=true
+      RandomizedDelaySec=20m
+
+      [Install]
+      WantedBy=timers.target
+  notify: Reload systemd
+
+# --prune takes a backup first and prunes only if it succeeded.
+- name: Install the duplicacy prune service unit
+  become: true
+  copy:
+    dest: /etc/systemd/system/duplicacy-nextcloud-prune.service
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Duplicacy backup + prune of Nextcloud data on B2
+      After=network-online.target {{ duplicacy_repo_mount | regex_replace('^/', '') | regex_replace('/', '-') }}.mount
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart={{ duplicacy_script }} --prune
+      TimeoutStartSec=infinity
+      StandardInput=null
+      Nice=15
+      IOSchedulingClass=idle
+  notify: Reload systemd
+
+- name: Install the duplicacy prune timer unit
+  become: true
+  copy:
+    dest: /etc/systemd/system/duplicacy-nextcloud-prune.timer
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Monthly duplicacy backup + prune of the Nextcloud B2 storage
+
+      [Timer]
+      OnCalendar={{ duplicacy_prune_oncalendar }}
+      Persistent=true
+      RandomizedDelaySec=30m
+
+      [Install]
+      WantedBy=timers.target
+  notify: Reload systemd
+
+# Left disabled until the first full upload has been done by hand. Seeding 1.2T
+# to B2 takes days and must not be started by a timer at 02:30.
+- name: Enable the duplicacy timers
+  become: true
+  systemd:
+    name: "{{ item }}"
+    enabled: "{{ duplicacy_timers_enabled }}"
+    state: "{{ 'started' if duplicacy_timers_enabled else 'stopped' }}"
+    daemon_reload: true
+  loop:
+    - duplicacy-nextcloud.timer
+    - duplicacy-nextcloud-prune.timer
+  when: not ansible_check_mode
