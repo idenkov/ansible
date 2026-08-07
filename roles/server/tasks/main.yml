@@ -7,16 +7,6 @@
 - name: Import vim configuration
   import_tasks: "{{ playbook_dir }}/roles/base/tasks/vim.yml"
 
-- name: Ensure Docker Python SDK and Docker Compose are installed
-  become: true
-  ansible.builtin.pip:
-    name:
-      - docker
-      - docker-compose
-    state: present
-    executable: /usr/bin/pip3  # Ensure the correct pip version is used
-
-
 - name: Import backup jobs
   import_tasks: "{{ playbook_dir }}/roles/server/tasks/backup.yml"
   tags: backup
@@ -24,7 +14,7 @@
 - name: Run Portainer container
   community.docker.docker_container:
     name: portainer
-    image: portainer/portainer-ce
+    image: "{{ portainer_image }}"
     state: started
     restart_policy: unless-stopped
     ports:
@@ -35,6 +25,7 @@
       - portainer_data:/data
     detach: true
   ignore_errors: yes
+  tags: portainer
 
 - name: Run the Ollama/Open-WebUI container
   community.docker.docker_container:

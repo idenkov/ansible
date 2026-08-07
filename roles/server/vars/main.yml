@@ -1,8 +1,12 @@
 ---
-compose_file_path: "{{ playbook_dir }}/roles/server/files/docker-compose.yml"
-nc_data_path: /mnt/ncloud/owncloud 
+nc_data_path: /mnt/ncloud/owncloud
 nc_db_path: /var/lib/mysql
 nc_config_path: /var/www/nextcloud/config
+
+# --- portainer -------------------------------------------------------------
+
+# Must be tagged. Portainer stopped moving :latest
+portainer_image: portainer/portainer-ce:lts
 
 # --- minidlna --------------------------------------------------------------
 
