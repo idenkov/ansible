@@ -1,0 +1,42 @@
+---
+
+- name: Ensure ZNC is installed
+  become: true
+  ansible.builtin.apt:
+    name: znc
+    state: present
+
+- name: Ensure the ZNC data directories are private
+  become: true
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ znc_user }}"
+    group: "{{ znc_group }}"
+    mode: '0700'
+  loop:
+    - "{{ znc_datadir }}"
+    - "{{ znc_datadir }}/configs"
+
+# ZNC rewrites znc.conf on shutdown and on every webadmin change
+- name: Seed the ZNC config and certificate from the vault
+  become: true
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: "{{ znc_user }}"
+    group: "{{ znc_group }}"
+    mode: '0600'
+    force: false
+  loop:
+    - { src: "{{ znc_vault_conf }}", dest: "{{ znc_datadir }}/configs/znc.conf" }
+    - { src: "{{ znc_vault_pem }}", dest: "{{ znc_datadir }}/znc.pem" }
+  # Seeds are for rebuilds only, so a missing one must not block the service.
+  when: item.src is file
+
+- name: Enable and start the packaged ZNC service
+  become: true
+  ansible.builtin.systemd:
+    name: znc
+    enabled: true
+    state: started

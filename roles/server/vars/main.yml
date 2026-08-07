@@ -3,6 +3,14 @@ nc_data_path: /mnt/ncloud/owncloud
 nc_db_path: /var/lib/mysql
 nc_config_path: /var/www/nextcloud/config
 
+# --- znc ---------------------------------------------------------------------
+
+znc_datadir: /var/lib/znc
+znc_user: _znc
+znc_group: _znc
+znc_vault_conf: "{{ playbook_dir }}/ansible-vault/znc.conf"
+znc_vault_pem: "{{ playbook_dir }}/ansible-vault/znc.pem"
+
 # --- portainer -------------------------------------------------------------
 
 # Must be tagged. Portainer stopped moving :latest
