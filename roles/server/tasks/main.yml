@@ -98,6 +98,30 @@
     network_mode: host
     detach: yes
 
+- name: Run MiniDLNA container
+  community.docker.docker_container:
+    name: MiniDLNA
+    image: "{{ minidlna_image }}"
+    state: started
+    restart_policy: unless-stopped
+    network_mode: host
+    env:
+      MINIDLNA_MEDIA_DIR: "/media"
+      MINIDLNA_FRIENDLY_NAME: "{{ minidlna_friendly_name }}"
+    volumes:
+      - "{{ minidlna_media_path }}:/media"
+      - "{{ minidlna_cache_volume }}:/minidlna"
+    # The image bakes in a healthcheck against localhost:8200
+    # the container reports unhealthy while serving perfectly. Probe by IP.
+    healthcheck:
+      test: ["CMD-SHELL", "curl --silent --fail 127.0.0.1:{{ minidlna_port }} || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 6
+    pull: false
+    detach: true
+  tags: minidlna
+
 - name: Nginx ollama proxy
   vars:
     domain_name: "{{ llm_domain }}"

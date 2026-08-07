@@ -4,6 +4,14 @@ nc_data_path: /mnt/ncloud/owncloud
 nc_db_path: /var/lib/mysql
 nc_config_path: /var/www/nextcloud/config
 
+# --- minidlna --------------------------------------------------------------
+
+minidlna_image: vladgh/minidlna:latest
+minidlna_friendly_name: MiniDLNA
+minidlna_media_path: /mnt/data/media
+minidlna_port: 8200
+minidlna_cache_volume: minidlna-cache
+
 # --- backups ---------------------------------------------------------------
 
 # Weekly DB dump. Lands on sdc, deliberately not on sda1 where the data it
