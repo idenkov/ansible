@@ -1,0 +1,102 @@
+#!/bin/bash
+# Managed by Ansible - roles/server/files/do-dns-update.sh.j2. Do not edit in place.
+#
+# Points the {{ do_dns_record_name }}.{{ do_dns_domain }} A record at this host's
+# current WAN address. Run by {{ do_dns_service }}.timer every
+# {{ do_dns_interval }}.
+#
+#   sudo {{ do_dns_script }} --dry-run
+#   sudo {{ do_dns_script }}
+
+set -euo pipefail
+
+DOMAIN={{ do_dns_domain }}
+RECORD_ID={{ do_dns_record_id }}
+RECORD_NAME={{ do_dns_record_name }}
+ENVFILE={{ do_dns_envfile }}
+LOCKFILE=/run/lock/do-dns-update.lock
+API="https://api.digitalocean.com/v2/domains/${DOMAIN}/records/${RECORD_ID}"
+
+DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1
+
+say() { echo "  $*"; }
+die() { echo "FAILED: $*" >&2; exit 1; }
+
+[ "$(id -u)" -eq 0 ] || die "run me with sudo"
+
+# An IPv4 dotted quad with every octet in range. Anything else is a captive
+# portal, an error page or a truncated response - never a value to publish.
+valid_ip() {
+    local ip=$1 o
+    [[ $ip =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+    for o in ${ip//./ }; do
+        [ "$o" -le 255 ] || return 1
+    done
+    return 0
+}
+
+# Overlapping runs would race each other into conflicting PUTs. A run that is
+# still going is not an error at this frequency, so exit quietly.
+exec 9>"$LOCKFILE"
+flock -n 9 || { say "another run is still in progress - skipping"; exit 0; }
+
+[ -r "$ENVFILE" ] || die "$ENVFILE is missing - is do_api_token set in the vault?"
+# shellcheck disable=SC1090
+. "$ENVFILE"
+[ -n "${DO_API_TOKEN:-}" ] || die "DO_API_TOKEN is empty in $ENVFILE"
+
+# --- current WAN address ----------------------------------------------------
+# Several providers, because a single one being down must not stall DNS. The
+# first well-formed answer wins.
+NIP=""
+for url in {{ do_dns_ip_endpoints | join(' ') }}; do
+    candidate=$(curl -fsS --max-time 10 "$url" 2>/dev/null | tr -d '[:space:]') || continue
+    if valid_ip "$candidate"; then
+        NIP=$candidate
+        say "WAN address:  $NIP  (via $url)"
+        break
+    fi
+    say "ignoring junk from $url: ${candidate:0:40}"
+done
+[ -n "$NIP" ] || die "no endpoint returned a usable address - leaving DNS alone"
+
+# --- address currently published --------------------------------------------
+# The old script parsed this with python2 and silently got an empty string once
+# python2 went away, so every run looked like a change. Fail loudly instead.
+BODY=$(mktemp); trap 'rm -f "$BODY"' EXIT
+CODE=$(curl -sS --max-time 20 -o "$BODY" -w '%{http_code}' \
+        -H 'Content-Type: application/json' \
+        -H "Authorization: Bearer ${DO_API_TOKEN}" \
+        "$API") || die "GET failed - could not reach the DigitalOcean API"
+[ "$CODE" = "200" ] || die "GET returned HTTP $CODE: $(head -c 200 "$BODY")"
+
+CIP=$(jq -re '.domain_record.data' < "$BODY") \
+    || die "unexpected GET payload: $(head -c 200 "$BODY")"
+say "published:    $CIP  (${RECORD_NAME}.${DOMAIN})"
+
+if [ "$NIP" = "$CIP" ]; then
+    echo "OK - unchanged"
+    exit 0
+fi
+
+if [ $DRY -eq 1 ]; then
+    say "would PUT $CIP -> $NIP"
+    exit 0
+fi
+
+# --- publish ----------------------------------------------------------------
+say "updating $CIP -> $NIP"
+CODE=$(curl -sS --max-time 20 -o "$BODY" -w '%{http_code}' \
+        -X PUT \
+        -H 'Content-Type: application/json' \
+        -H "Authorization: Bearer ${DO_API_TOKEN}" \
+        -d "{\"data\":\"${NIP}\"}" \
+        "$API") || die "PUT failed - could not reach the DigitalOcean API"
+[ "$CODE" = "200" ] || die "PUT returned HTTP $CODE: $(head -c 200 "$BODY")"
+
+# Trust the echoed record, not the status code: a 200 carrying the old value
+# still means the update did not take.
+GOT=$(jq -re '.domain_record.data' < "$BODY") || die "unexpected PUT payload"
+[ "$GOT" = "$NIP" ] || die "API accepted the write but reports $GOT"
+
+echo "OK - ${RECORD_NAME}.${DOMAIN} now points at $NIP"

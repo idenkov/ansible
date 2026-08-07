@@ -1,0 +1,81 @@
+---
+
+- name: Install the DigitalOcean DNS update script
+  become: true
+  template:
+    src: "files/do-dns-update.sh.j2"
+    dest: "{{ do_dns_script }}"
+    owner: root
+    group: root
+    mode: '0750'
+
+- name: Create the DigitalOcean credentials directory
+  become: true
+  file:
+    path: "{{ do_dns_envfile | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Install the DigitalOcean API credentials file
+  become: true
+  copy:
+    dest: "{{ do_dns_envfile }}"
+    owner: root
+    group: root
+    mode: '0600'
+    content: |
+      DO_API_TOKEN='{{ do_api_token }}'
+  no_log: true
+  when: do_api_token is defined
+
+- name: Install the DNS update service unit
+  become: true
+  copy:
+    dest: "/etc/systemd/system/{{ do_dns_service }}.service"
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Update the {{ do_dns_record_name }}.{{ do_dns_domain }} A record at DigitalOcean
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart={{ do_dns_script }}
+      StandardInput=null
+  notify: Reload systemd
+
+- name: Install the DNS update timer unit
+  become: true
+  copy:
+    dest: "/etc/systemd/system/{{ do_dns_service }}.timer"
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Refresh the {{ do_dns_record_name }}.{{ do_dns_domain }} A record every {{ do_dns_interval }}
+
+      [Timer]
+      OnBootSec={{ do_dns_boot_delay }}
+      OnUnitActiveSec={{ do_dns_interval }}
+      # A missed window is worthless here - only the current address matters.
+      Persistent=false
+
+      [Install]
+      WantedBy=timers.target
+  notify: Reload systemd
+
+- name: Enable the DNS update timer
+  become: true
+  systemd:
+    name: "{{ do_dns_service }}.timer"
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: not ansible_check_mode
+
