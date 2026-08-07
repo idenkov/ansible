@@ -11,6 +11,10 @@
   import_tasks: "{{ playbook_dir }}/roles/server/tasks/backup.yml"
   tags: backup
 
+- name: Import the local Nextcloud mirror
+  import_tasks: "{{ playbook_dir }}/roles/server/tasks/mirror.yml"
+  tags: mirror
+
 - name: Import dynamic DNS updater
   import_tasks: "{{ playbook_dir }}/roles/server/tasks/dns.yml"
   tags: dns

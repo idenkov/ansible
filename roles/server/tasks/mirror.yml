@@ -1,0 +1,76 @@
+---
+
+- name: Install btrfs-progs
+  become: true
+  package:
+    name: btrfs-progs
+    state: present
+
+- name: Install the Nextcloud mirror script
+  become: true
+  template:
+    src: "files/ncloud-mirror.sh.j2"
+    dest: "{{ ncloud_mirror_script }}"
+    owner: root
+    group: root
+    mode: '0750'
+
+- name: Create the mirror root directory
+  become: true
+  file:
+    path: "{{ ncloud_mirror_root }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Install the Nextcloud mirror service unit
+  become: true
+  copy:
+    dest: /etc/systemd/system/ncloud-mirror.service
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Mirror the Nextcloud data directory onto the backup disk
+      After={{ ncloud_mirror_src_mount | regex_replace('^/', '') | regex_replace('/', '-') }}.mount {{ ncloud_mirror_dest_mount | regex_replace('^/', '') | regex_replace('/', '-') }}.mount
+
+      [Service]
+      Type=oneshot
+      ExecStart={{ ncloud_mirror_script }}
+      # The first pass copies 1.2 TB and takes hours.
+      TimeoutStartSec=infinity
+      StandardInput=null
+      Nice=15
+      IOSchedulingClass=idle
+  notify: Reload systemd
+
+- name: Install the Nextcloud mirror timer unit
+  become: true
+  copy:
+    dest: /etc/systemd/system/ncloud-mirror.timer
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Weekly mirror of the Nextcloud data directory
+
+      [Timer]
+      OnCalendar={{ ncloud_mirror_oncalendar }}
+      Persistent=true
+      RandomizedDelaySec=10m
+
+      [Install]
+      WantedBy=timers.target
+  notify: Reload systemd
+
+- name: Enable the Nextcloud mirror timer
+  become: true
+  systemd:
+    name: ncloud-mirror.timer
+    enabled: "{{ ncloud_mirror_timer_enabled }}"
+    state: "{{ 'started' if ncloud_mirror_timer_enabled else 'stopped' }}"
+    daemon_reload: true
+  when: not ansible_check_mode

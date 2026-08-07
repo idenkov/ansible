@@ -36,6 +36,26 @@ do_dns_ip_endpoints:
   - https://api.ipify.org
   - https://ifconfig.me/ip
 
+# --- local mirror ----------------------------------------------------------
+
+# Second on-disk copy of the Nextcloud data, sda1 -> sdc1
+ncloud_mirror_script: /usr/local/sbin/ncloud-mirror.sh
+ncloud_mirror_src: /mnt/ncloud/owncloud
+ncloud_mirror_src_mount: /mnt/ncloud
+ncloud_mirror_dest_mount: /mnt/backups
+ncloud_mirror_root: /mnt/backups/ncloud
+ncloud_mirror_live: "{{ ncloud_mirror_root }}/live"
+ncloud_mirror_snapdir: "{{ ncloud_mirror_root }}/.snapshots"
+ncloud_mirror_oncalendar: "Sun *-*-* 01:00:00"
+# Weekly runs, so 4 snapshots is 4 weeks of history.
+ncloud_mirror_keep: 4
+ncloud_mirror_timer_enabled: true
+# Circuit breaker. A normal week deletes a handful of files; thousands means the
+# source lost data, and replaying that onto the mirror is the thing to prevent.
+ncloud_mirror_max_delete: 5000
+ncloud_mirror_min_source_gb: 900
+ncloud_mirror_min_entries: 5
+
 # --- backups ---------------------------------------------------------------
 
 # Weekly DB dump. Lands on sdc, deliberately not on sda1 where the data it

@@ -1,0 +1,156 @@
+#!/bin/bash
+# Managed by Ansible - roles/server/files/ncloud-mirror.sh.j2. Do not edit in place.
+#
+# Mirrors the Nextcloud data directory onto the backup disk
+#
+#   sudo {{ ncloud_mirror_script }} --dry-run
+#   sudo {{ ncloud_mirror_script }}
+#
+# Layout on the destination:
+#   {{ ncloud_mirror_live }}          the mirror itself (a btrfs subvolume)
+#   {{ ncloud_mirror_snapdir }}/DATE  read-only snapshot taken before each sync
+
+set -euo pipefail
+
+SRC={{ ncloud_mirror_src }}
+SRC_MOUNT={{ ncloud_mirror_src_mount }}
+DST_MOUNT={{ ncloud_mirror_dest_mount }}
+LIVE={{ ncloud_mirror_live }}
+SNAPDIR={{ ncloud_mirror_snapdir }}
+KEEP={{ ncloud_mirror_keep }}
+MAX_DELETE={{ ncloud_mirror_max_delete }}
+MIN_SOURCE_GB={{ ncloud_mirror_min_source_gb }}
+MIN_ENTRIES={{ ncloud_mirror_min_entries }}
+LOCKFILE=/run/lock/ncloud-mirror.lock
+
+DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1
+
+say() { echo "  $*"; }
+die() { echo "FAILED: $*" >&2; exit 1; }
+
+[ "$(id -u)" -eq 0 ] || die "run me with sudo"
+
+echo "=============================================================="
+echo " NEXTCLOUD LOCAL MIRROR$([ $DRY -eq 1 ] && echo '  (dry run)')"
+echo "=============================================================="
+say "source:       $SRC"
+say "destination:  $LIVE"
+say "date:         $(date -Is)"
+echo
+
+# --- guards -----------------------------------------------------------------
+# Every one of these exists to stop a --delete run from propagating an empty or
+# half-present source over a good mirror. The data disks are mounted 'nofail',
+# so a disk that fails to mount leaves an empty directory behind rather than
+# stopping the boot - which is exactly the shape of accident this must survive.
+
+mountpoint -q "$SRC_MOUNT" || die "$SRC_MOUNT is not mounted - refusing to sync from an empty directory"
+mountpoint -q "$DST_MOUNT" || die "$DST_MOUNT is not mounted - refusing to write to the root fs"
+
+[ -d "$SRC" ] || die "$SRC does not exist"
+
+ENTRIES=$(find "$SRC" -maxdepth 1 -mindepth 1 | wc -l)
+[ "$ENTRIES" -ge "$MIN_ENTRIES" ] || die "$SRC has only $ENTRIES entries (floor is $MIN_ENTRIES) - treating as a broken source"
+
+USED_GB=$(df -BG --output=used "$SRC_MOUNT" | tail -1 | tr -dc '0-9')
+[ "$USED_GB" -ge "$MIN_SOURCE_GB" ] || die "$SRC_MOUNT holds only ${USED_GB}G (floor is ${MIN_SOURCE_GB}G) - treating as a broken source"
+
+say "source looks sane: $ENTRIES top-level entries, ${USED_GB}G used on $SRC_MOUNT"
+
+command -v btrfs >/dev/null || die "btrfs-progs not installed"
+[ "$(stat -f -c %T "$DST_MOUNT")" = "btrfs" ] || die "$DST_MOUNT is not btrfs - the snapshot safety net would not exist"
+
+# Overlapping runs would fight over the same destination.
+exec 9>"$LOCKFILE"
+flock -n 9 || die "another mirror run is still in progress (lock: $LOCKFILE)"
+
+# --- destination subvolume --------------------------------------------------
+mkdir -p "$SNAPDIR"
+if [ ! -e "$LIVE" ]; then
+    say "first run - creating the destination subvolume"
+    [ $DRY -eq 1 ] || btrfs subvolume create "$LIVE" >/dev/null
+elif ! btrfs subvolume show "$LIVE" >/dev/null 2>&1; then
+    die "$LIVE exists but is not a btrfs subvolume - cannot snapshot it. Move it aside and re-run."
+fi
+
+# --- pre-flight: how many files would this run delete? ----------------------
+# --max-delete alone is not enough: it stops *after* N deletions, so a runaway
+# run still destroys N files before erroring. Counting first with --dry-run
+# means a run that would delete too much aborts having touched nothing at all.
+RSYNC_BASE=(-aHAX --numeric-ids --delete)
+
+say "pre-flight: counting pending deletions..."
+PENDING=$(ionice -c 3 nice -n 15 rsync "${RSYNC_BASE[@]}" --dry-run \
+            --out-format='%o %n' "$SRC/" "$LIVE/" 2>/dev/null | grep -c '^del\.' || true)
+say "pending deletions: $PENDING (limit $MAX_DELETE)"
+
+if [ "$PENDING" -gt "$MAX_DELETE" ]; then
+    die "$PENDING files would be deleted from the mirror, over the limit of $MAX_DELETE.
+  Nothing has been touched. Either the source genuinely lost data - in which case
+  the mirror is now the good copy - or this is a real bulk delete, in which case
+  re-run with ncloud_mirror_max_delete raised."
+fi
+
+# --- snapshot before touching anything --------------------------------------
+# This is the safety net. Taken *before* the sync, so whatever rsync does next
+# is always recoverable from here.
+if [ $DRY -eq 0 ] && [ -n "$(ls -A "$LIVE" 2>/dev/null)" ]; then
+    SNAP="$SNAPDIR/$(date +%F-%H%M)"
+    if [ -e "$SNAP" ]; then
+        say "snapshot $SNAP already exists - reusing"
+    else
+        btrfs subvolume snapshot -r "$LIVE" "$SNAP" >/dev/null
+        say "snapshot taken: $SNAP"
+    fi
+else
+    say "no snapshot (mirror is empty or dry run)"
+fi
+
+# --- sync -------------------------------------------------------------------
+# -H preserves hardlinks, -A -X ACLs and xattrs, --numeric-ids keeps www-data
+# (uid 33) correct without depending on the passwd file.
+# --max-delete is the circuit breaker: a source that has lost a large number of
+# files aborts the run (rsync exit 25) instead of replaying those deletions.
+RSYNC_OPTS=(
+    "${RSYNC_BASE[@]}"
+    --delete-delay
+    # Backstop only - the pre-flight count above is the real guard. This still
+    # matters because the source can change between the two passes.
+    --max-delete="$MAX_DELETE"
+    --human-readable
+    --stats
+)
+[ $DRY -eq 1 ] && RSYNC_OPTS+=(--dry-run)
+
+say "syncing (max-delete=$MAX_DELETE)..."
+echo
+set +e
+ionice -c 3 nice -n 15 rsync "${RSYNC_OPTS[@]}" "$SRC/" "$LIVE/"
+RC=$?
+set -e
+echo
+
+case $RC in
+    0)  say "sync complete" ;;
+    24) say "sync complete (some files vanished mid-run - normal on a live server)" ;;
+    23) echo "  WARNING: partial transfer - some files could not be read (rsync 23)" ;;
+    25) die "rsync hit --max-delete=$MAX_DELETE and aborted. The source may have lost data. The mirror and its snapshots are untouched - investigate before re-running." ;;
+    *)  die "rsync failed with exit $RC - the mirror may be incomplete, but the pre-sync snapshot is intact" ;;
+esac
+
+[ $DRY -eq 1 ] && { echo; echo "OK (dry run)"; exit 0; }
+
+# --- prune snapshots --------------------------------------------------------
+# By count, not age: a run that has not happened for a while must not cause the
+# surviving snapshots to be deleted.
+mapfile -t STALE < <(find "$SNAPDIR" -maxdepth 1 -mindepth 1 -type d | sort -r | tail -n +$((KEEP + 1)))
+for s in "${STALE[@]}"; do
+    say "pruning snapshot $(basename "$s")"
+    btrfs subvolume delete "$s" >/dev/null
+done
+
+echo
+say "snapshots kept: $(find "$SNAPDIR" -maxdepth 1 -mindepth 1 -type d | wc -l) of $KEEP"
+find "$SNAPDIR" -maxdepth 1 -mindepth 1 -type d | sort -r | sed 's/^/    /'
+echo
+echo "OK"
