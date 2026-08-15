@@ -55,6 +55,10 @@ ncloud_mirror_timer_enabled: true
 ncloud_mirror_max_delete: 5000
 ncloud_mirror_min_source_gb: 900
 ncloud_mirror_min_entries: 5
+# Regenerable caches, excluded because walking them is expensive and not needed
+ncloud_mirror_excludes:
+  - "/appdata_*/preview/"
+  - "/updater-*/"
 
 # --- backups ---------------------------------------------------------------
 

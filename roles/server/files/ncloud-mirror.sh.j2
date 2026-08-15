@@ -23,6 +23,14 @@ MIN_SOURCE_GB={{ ncloud_mirror_min_source_gb }}
 MIN_ENTRIES={{ ncloud_mirror_min_entries }}
 LOCKFILE=/run/lock/ncloud-mirror.lock
 
+# Regenerable caches. These are skipped by both rsync passes below - the walk
+# over them, not the copying, is what makes a run slow.
+EXCLUDES=(
+{% for pattern in ncloud_mirror_excludes %}
+    --exclude='{{ pattern }}'
+{% endfor %}
+)
+
 DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1
 
 say() { echo "  $*"; }
@@ -36,6 +44,7 @@ echo "=============================================================="
 say "source:       $SRC"
 say "destination:  $LIVE"
 say "date:         $(date -Is)"
+say "excluding:   {% for pattern in ncloud_mirror_excludes %} {{ pattern }}{% endfor %}"
 echo
 
 # --- guards -----------------------------------------------------------------
@@ -74,10 +83,7 @@ elif ! btrfs subvolume show "$LIVE" >/dev/null 2>&1; then
 fi
 
 # --- pre-flight: how many files would this run delete? ----------------------
-# --max-delete alone is not enough: it stops *after* N deletions, so a runaway
-# run still destroys N files before erroring. Counting first with --dry-run
-# means a run that would delete too much aborts having touched nothing at all.
-RSYNC_BASE=(-aHAX --numeric-ids --delete)
+RSYNC_BASE=(-aHAX --numeric-ids --delete "${EXCLUDES[@]}")
 
 say "pre-flight: counting pending deletions..."
 PENDING=$(ionice -c 3 nice -n 15 rsync "${RSYNC_BASE[@]}" --dry-run \
