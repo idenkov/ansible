@@ -1,0 +1,109 @@
+---
+# TLS for mailcow.
+#
+# certbot already runs on this host for the other vhosts and renews reliably,
+# so it owns this certificate too and mailcow stays on SKIP_LETS_ENCRYPT=y.
+# The alternative - proxying ACME challenges into mailcow's own client - would
+# put two ACME clients on one box competing for the same names.
+#
+# The vhost is templated twice on a first run: once without TLS so the webroot
+# is reachable for the challenge, then again once certbot has issued.
+
+- name: Check the mail domain came from the vault
+  assert:
+    that: mail_dns_domain is defined
+    fail_msg: mail_dns_domain must come from ansible-vault/secrets.txt - run with --ask-vault-password.
+    quiet: true
+
+- name: Keep mailcow's own ACME client disabled
+  become: true
+  lineinfile:
+    path: "{{ mailcow_root }}/mailcow.conf"
+    regexp: '^SKIP_LETS_ENCRYPT='
+    line: 'SKIP_LETS_ENCRYPT=y'
+  # A stray SKIP_LETS_ENCRYPT=n would have mailcow fighting certbot for the
+  # same names and tripping Let's Encrypt rate limits.
+
+- name: Look for an existing mailcow certificate
+  become: true
+  stat:
+    path: "{{ mailcow_cert_live }}/fullchain.pem"
+  register: mailcow_cert_before
+
+- name: Install the mailcow vhost so the ACME webroot is reachable
+  become: true
+  vars:
+    mailcow_cert_ready: "{{ mailcow_cert_before.stat.exists }}"
+  template:
+    src: "files/nginx_mailcow.j2"
+    dest: "/etc/nginx/sites-enabled/{{ mailcow_hostname }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Check the nginx configuration parses
+  become: true
+  command: nginx -t
+  changed_when: false
+
+- name: Reload nginx to serve the challenge path
+  become: true
+  service:
+    name: nginx
+    state: reloaded
+
+- name: Obtain the mailcow certificate
+  become: true
+  command: >
+    certbot certonly -n --webroot -w {{ mailcow_webroot }}
+    --agree-tos --no-eff-email
+    --cert-name {{ mailcow_hostname }}
+    {{ mailcow_cert_names | map('regex_replace', '^', '-d ') | join(' ') }}
+  args:
+    creates: "{{ mailcow_cert_live }}/fullchain.pem"
+
+- name: Re-check for the certificate now that certbot has run
+  become: true
+  stat:
+    path: "{{ mailcow_cert_live }}/fullchain.pem"
+  register: mailcow_cert_after
+
+- name: Add the TLS server block now that the certificate exists
+  become: true
+  vars:
+    mailcow_cert_ready: "{{ mailcow_cert_after.stat.exists }}"
+  template:
+    src: "files/nginx_mailcow.j2"
+    dest: "/etc/nginx/sites-enabled/{{ mailcow_hostname }}"
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Nginx reload
+
+# mailcow builds dovecot's sni.conf and postfix's sni.map from the per-host
+# directories under data/assets/ssl/ on every restart. A directory left behind
+# by its own ACME client keeps winning for clients that send SNI - which is all
+# of them - so the good default certificate is never seen. One here held a cert
+# that expired in 2022.
+- name: Remove the stale per-host SNI certificate directory
+  become: true
+  file:
+    path: "{{ mailcow_ssl_dir }}/{{ mailcow_hostname }}"
+    state: absent
+  notify: Restart mailcow mail services
+
+- name: Install the certbot deploy hook that feeds mailcow
+  become: true
+  template:
+    src: "files/mailcow-cert-deploy.sh.j2"
+    dest: "{{ mailcow_cert_hook }}"
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Push the certificate into mailcow and restart the mail services
+  become: true
+  command: "{{ mailcow_cert_hook }}"
+  register: mailcow_cert_deploy
+  changed_when: "'certificate copied' in mailcow_cert_deploy.stdout"
+  when: mailcow_cert_after.stat.exists

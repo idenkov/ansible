@@ -9,3 +9,9 @@
   become: true
   systemd:
     daemon_reload: true
+
+- name: Restart mailcow mail services
+  become: true
+  command: "docker compose restart {{ mailcow_reload_services }}"
+  args:
+    chdir: "{{ mailcow_root }}"

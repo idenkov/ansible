@@ -58,6 +58,27 @@ mail_dns_ttl: 3600
 #   mail_dns_records       list of records to reconcile, each {type, name, data}
 #                          plus priority/port/weight for MX and SRV
 
+# --- mailcow tls -----------------------------------------------------------
+
+# certbot owns the certificate; mailcow stays on SKIP_LETS_ENCRYPT=y and is fed
+# by the deploy hook. See roles/server/tasks/mailcow-certs.yml.
+mailcow_root: /opt/mailcow-dockerized
+mailcow_ssl_dir: "{{ mailcow_root }}/data/assets/ssl"
+mailcow_webroot: /var/www/html
+mailcow_upstream: 127.0.0.1:8080
+mailcow_cert_hook: /etc/letsencrypt/renewal-hooks/deploy/mailcow.sh
+# These read the domain from the vault at run time, so nothing identifying is
+# committed here.
+mailcow_hostname: "mail.{{ mail_dns_domain }}"
+mailcow_cert_names:
+  - "mail.{{ mail_dns_domain }}"
+  - "autodiscover.{{ mail_dns_domain }}"
+  - "autoconfig.{{ mail_dns_domain }}"
+mailcow_cert_live: "/etc/letsencrypt/live/{{ mailcow_hostname }}"
+# Only the services that actually read cert.pem - restarting the whole stack
+# would be a needless outage on every renewal.
+mailcow_reload_services: "postfix-mailcow dovecot-mailcow nginx-mailcow"
+
 # --- local mirror ----------------------------------------------------------
 
 # Second on-disk copy of the Nextcloud data, sda1 -> sdc1

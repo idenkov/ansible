@@ -1,0 +1,44 @@
+#!/bin/bash
+# Managed by Ansible - roles/server/files/mailcow-cert-deploy.sh.j2. Do not edit in place.
+#
+# certbot deploy hook. mailcow runs with SKIP_LETS_ENCRYPT=y, so nothing inside
+# it renews anything - this script is the only thing keeping postfix, dovecot
+# and mailcow's internal nginx on a valid certificate.
+#
+# Runs unattended from certbot, or by hand to push the current certificate:
+#   sudo {{ mailcow_cert_hook }}
+
+set -euo pipefail
+
+LINEAGE={{ mailcow_cert_live }}
+SSL_DIR={{ mailcow_ssl_dir }}
+MAILCOW_ROOT={{ mailcow_root }}
+
+# certbot runs every deploy hook for every lineage it renews, so ignore the
+# other certificates on this host. No RENEWED_LINEAGE means a manual run.
+if [ -n "${RENEWED_LINEAGE:-}" ] && [ "${RENEWED_LINEAGE}" != "$LINEAGE" ]; then
+    exit 0
+fi
+
+[ -r "$LINEAGE/fullchain.pem" ] || { echo "no certificate at $LINEAGE" >&2; exit 1; }
+
+# Restarting the mail stack drops live IMAP and SMTP connections, so only do it
+# when the certificate on disk actually differs.
+if cmp -s "$LINEAGE/fullchain.pem" "$SSL_DIR/cert.pem" &&
+   cmp -s "$LINEAGE/privkey.pem" "$SSL_DIR/key.pem"; then
+    echo "mailcow already has this certificate - nothing to do"
+    exit 0
+fi
+
+install -m 644 -o root -g root "$LINEAGE/fullchain.pem" "$SSL_DIR/cert.pem"
+install -m 600 -o root -g root "$LINEAGE/privkey.pem"   "$SSL_DIR/key.pem"
+echo "certificate copied into $SSL_DIR"
+
+cd "$MAILCOW_ROOT"
+docker compose restart {{ mailcow_reload_services }}
+echo "restarted: {{ mailcow_reload_services }}"
+
+# The host nginx serves the UI from the same lineage but mailcow knows nothing
+# about it, so it needs its own reload.
+systemctl reload nginx
+echo "reloaded host nginx"

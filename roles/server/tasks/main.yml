@@ -23,6 +23,10 @@
   import_tasks: "{{ playbook_dir }}/roles/server/tasks/dns-mail.yml"
   tags: dns-mail
 
+- name: Import mailcow TLS
+  import_tasks: "{{ playbook_dir }}/roles/server/tasks/mailcow-certs.yml"
+  tags: mailcow-certs
+
 - name: Import ZNC service
   import_tasks: "{{ playbook_dir }}/roles/server/tasks/znc.yml"
   tags: znc
