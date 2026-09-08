@@ -19,6 +19,10 @@
   import_tasks: "{{ playbook_dir }}/roles/server/tasks/dns.yml"
   tags: dns
 
+- name: Import the static mail DNS records
+  import_tasks: "{{ playbook_dir }}/roles/server/tasks/dns-mail.yml"
+  tags: dns-mail
+
 - name: Import ZNC service
   import_tasks: "{{ playbook_dir }}/roles/server/tasks/znc.yml"
   tags: znc

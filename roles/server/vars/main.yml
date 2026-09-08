@@ -35,6 +35,28 @@ do_dns_ip_endpoints:
   - https://checkip.amazonaws.com
   - https://api.ipify.org
   - https://ifconfig.me/ip
+# Short, because the whole point is that the address can change under us.
+do_dns_ttl: 300
+#
+# Identifying values live in ansible-vault/secrets.txt and are deliberately NOT
+# defaulted here - role vars outrank the play's vars_files, so a copy in this
+# file would silently shadow the vault. Expected from the vault:
+#   do_api_token           DigitalOcean personal access token
+#   do_dns_domain          zone holding the host record
+#   do_dns_record_name     host record within that zone
+#   do_dns_extra_a_records list of {domain, name} also pinned to the WAN address
+#   do_dns_legacy_script   path of the hand-written script this replaced
+
+# --- mail dns --------------------------------------------------------------
+
+# Static records for mailcow (MX/SPF/DKIM/DMARC/SRV). Reconciled once per play
+# run by dns-mail.yml, not by the timer - none of them track the WAN address.
+# Long, because these values change roughly never.
+mail_dns_ttl: 3600
+# From the vault, for the same shadowing reason as above:
+#   mail_dns_domain        zone the mailcow instance sends and receives for
+#   mail_dns_records       list of records to reconcile, each {type, name, data}
+#                          plus priority/port/weight for MX and SRV
 
 # --- local mirror ----------------------------------------------------------
 

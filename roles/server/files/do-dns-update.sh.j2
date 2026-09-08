@@ -1,26 +1,45 @@
 #!/bin/bash
+{% set do_dns_a_targets = ([{'domain': do_dns_domain, 'name': do_dns_record_name}] + (do_dns_extra_a_records | default([]))) %}
 # Managed by Ansible - roles/server/files/do-dns-update.sh.j2. Do not edit in place.
 #
-# Points the {{ do_dns_record_name }}.{{ do_dns_domain }} A record at this host's
-# current WAN address. Run by {{ do_dns_service }}.timer every
-# {{ do_dns_interval }}.
+# Points every A record below at this host's current WAN address:
+{% for t in do_dns_a_targets %}
+#   {{ t.name }}.{{ t.domain }}
+{% endfor %}
+#
+# Run by {{ do_dns_service }}.timer every {{ do_dns_interval }}.
 #
 #   sudo {{ do_dns_script }} --dry-run
 #   sudo {{ do_dns_script }}
+#
+# Records are resolved by name at run time rather than by a hardcoded id, so a
+# record recreated by hand in the DigitalOcean panel is picked up on the next
+# run instead of leaving the script writing to an id that no longer exists.
+# A listed name with no record at all is created.
 
 set -euo pipefail
 
-DOMAIN={{ do_dns_domain }}
-RECORD_ID={{ do_dns_record_id }}
-RECORD_NAME={{ do_dns_record_name }}
 ENVFILE={{ do_dns_envfile }}
 LOCKFILE=/run/lock/do-dns-update.lock
-API="https://api.digitalocean.com/v2/domains/${DOMAIN}/records/${RECORD_ID}"
+TTL={{ do_dns_ttl }}
+
+# 'domain name' per line. More than one domain is in play: the mail names live
+# on a different zone from the host record.
+TARGETS=(
+{% for t in do_dns_a_targets %}
+    '{{ t.domain }} {{ t.name }}'
+{% endfor %}
+)
 
 DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1
 
 say() { echo "  $*"; }
 die() { echo "FAILED: $*" >&2; exit 1; }
+
+# One bad record must not stop the others - a wrong address on mail. is worth
+# fixing even if autodiscover. is broken. Tracked here, reported at the end.
+FAILED=0
+warn() { echo "  !! $*" >&2; FAILED=1; }
 
 [ "$(id -u)" -eq 0 ] || die "run me with sudo"
 
@@ -45,6 +64,28 @@ flock -n 9 || { say "another run is still in progress - skipping"; exit 0; }
 . "$ENVFILE"
 [ -n "${DO_API_TOKEN:-}" ] || die "DO_API_TOKEN is empty in $ENVFILE"
 
+BODY=$(mktemp); trap 'rm -f "$BODY"' EXIT
+
+# Wraps curl so every call checks the status code the same way. Response lands
+# in $BODY; returns non-zero on anything unexpected.
+api() {
+    local method=$1 url=$2 want=$3 data=${4:-} code
+    if [ -n "$data" ]; then
+        code=$(curl -sS --max-time 20 -o "$BODY" -w '%{http_code}' \
+                -X "$method" \
+                -H 'Content-Type: application/json' \
+                -H "Authorization: Bearer ${DO_API_TOKEN}" \
+                -d "$data" "$url") || return 1
+    else
+        code=$(curl -sS --max-time 20 -o "$BODY" -w '%{http_code}' \
+                -X "$method" \
+                -H 'Content-Type: application/json' \
+                -H "Authorization: Bearer ${DO_API_TOKEN}" \
+                "$url") || return 1
+    fi
+    [ "$code" = "$want" ] || { echo "HTTP $code: $(head -c 200 "$BODY")" >&2; return 1; }
+}
+
 # --- current WAN address ----------------------------------------------------
 # Several providers, because a single one being down must not stall DNS. The
 # first well-formed answer wins.
@@ -60,43 +101,65 @@ for url in {{ do_dns_ip_endpoints | join(' ') }}; do
 done
 [ -n "$NIP" ] || die "no endpoint returned a usable address - leaving DNS alone"
 
-# --- address currently published --------------------------------------------
-# The old script parsed this with python2 and silently got an empty string once
-# python2 went away, so every run looked like a change. Fail loudly instead.
-BODY=$(mktemp); trap 'rm -f "$BODY"' EXIT
-CODE=$(curl -sS --max-time 20 -o "$BODY" -w '%{http_code}' \
-        -H 'Content-Type: application/json' \
-        -H "Authorization: Bearer ${DO_API_TOKEN}" \
-        "$API") || die "GET failed - could not reach the DigitalOcean API"
-[ "$CODE" = "200" ] || die "GET returned HTTP $CODE: $(head -c 200 "$BODY")"
+# --- reconcile each record --------------------------------------------------
+for target in "${TARGETS[@]}"; do
+    domain=${target% *}
+    name=${target#* }
+    api_base="https://api.digitalocean.com/v2/domains/${domain}/records"
 
-CIP=$(jq -re '.domain_record.data' < "$BODY") \
-    || die "unexpected GET payload: $(head -c 200 "$BODY")"
-say "published:    $CIP  (${RECORD_NAME}.${DOMAIN})"
+    # DigitalOcean's name filter wants the FQDN, and the apex is stored as '@'.
+    if [ "$name" = "@" ]; then host=$domain; else host="${name}.${domain}"; fi
 
-if [ "$NIP" = "$CIP" ]; then
-    echo "OK - unchanged"
-    exit 0
-fi
+    if ! api GET "${api_base}?type=A&name=${host}&per_page=200" 200; then
+        warn "$host: lookup failed - skipping"
+        continue
+    fi
 
-if [ $DRY -eq 1 ]; then
-    say "would PUT $CIP -> $NIP"
-    exit 0
-fi
+    count=$(jq -re '.domain_records | length' < "$BODY") || { warn "$host: unexpected list payload"; continue; }
 
-# --- publish ----------------------------------------------------------------
-say "updating $CIP -> $NIP"
-CODE=$(curl -sS --max-time 20 -o "$BODY" -w '%{http_code}' \
-        -X PUT \
-        -H 'Content-Type: application/json' \
-        -H "Authorization: Bearer ${DO_API_TOKEN}" \
-        -d "{\"data\":\"${NIP}\"}" \
-        "$API") || die "PUT failed - could not reach the DigitalOcean API"
-[ "$CODE" = "200" ] || die "PUT returned HTTP $CODE: $(head -c 200 "$BODY")"
+    # Two A records for one name is round-robin, deliberate or not. Guessing
+    # which to rewrite would silently drop the other, so leave both alone.
+    if [ "$count" -gt 1 ]; then
+        warn "$host: $count A records exist - refusing to guess which to update"
+        continue
+    fi
 
-# Trust the echoed record, not the status code: a 200 carrying the old value
-# still means the update did not take.
-GOT=$(jq -re '.domain_record.data' < "$BODY") || die "unexpected PUT payload"
-[ "$GOT" = "$NIP" ] || die "API accepted the write but reports $GOT"
+    if [ "$count" -eq 0 ]; then
+        if [ $DRY -eq 1 ]; then
+            say "would create $host -> $NIP"
+            continue
+        fi
+        say "creating     $host -> $NIP"
+        if ! api POST "$api_base" 201 "{\"type\":\"A\",\"name\":\"${name}\",\"data\":\"${NIP}\",\"ttl\":${TTL}}"; then
+            warn "$host: create failed"
+        fi
+        continue
+    fi
 
-echo "OK - ${RECORD_NAME}.${DOMAIN} now points at $NIP"
+    rid=$(jq -re '.domain_records[0].id' < "$BODY")
+    cip=$(jq -re '.domain_records[0].data' < "$BODY")
+
+    if [ "$NIP" = "$cip" ]; then
+        say "unchanged    $host  ($cip)"
+        continue
+    fi
+
+    if [ $DRY -eq 1 ]; then
+        say "would update $host  $cip -> $NIP"
+        continue
+    fi
+
+    say "updating     $host  $cip -> $NIP"
+    if ! api PUT "${api_base}/${rid}" 200 "{\"data\":\"${NIP}\"}"; then
+        warn "$host: update failed"
+        continue
+    fi
+
+    # Trust the echoed record, not the status code: a 200 carrying the old
+    # value still means the update did not take.
+    got=$(jq -re '.domain_record.data' < "$BODY") || { warn "$host: unexpected PUT payload"; continue; }
+    [ "$got" = "$NIP" ] || warn "$host: API accepted the write but reports $got"
+done
+
+[ $FAILED -eq 0 ] || die "one or more records did not reconcile"
+echo "OK - {{ do_dns_a_targets | length }} record(s) point at $NIP"

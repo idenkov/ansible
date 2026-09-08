@@ -1,0 +1,90 @@
+---
+# Static DNS for the mailcow instance - MX, SPF, DKIM, DMARC and the client
+# autoconfiguration SRVs. These do not move with the WAN address, so unlike the
+# A records in dns.yml they are reconciled once per play run rather than by a
+# timer.
+#
+# Every value is identifying, so all of it comes from ansible-vault/secrets.txt
+# (mail_dns_domain, mail_dns_records). See the comment in vars/main.yml.
+
+- name: Check the mail DNS variables came from the vault
+  assert:
+    that:
+      - mail_dns_domain is defined
+      - mail_dns_records is defined
+      - do_api_token is defined
+    fail_msg: >-
+      mail_dns_domain, mail_dns_records and do_api_token must come from
+      ansible-vault/secrets.txt - run with --ask-vault-password.
+    quiet: true
+
+- name: Fetch the records DigitalOcean already holds for the mail domain
+  uri:
+    url: "https://api.digitalocean.com/v2/domains/{{ mail_dns_domain }}/records?per_page=200"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ do_api_token }}"
+    return_content: true
+  register: mail_dns_existing
+  no_log: true
+  check_mode: false
+  changed_when: false
+
+# A second record of the same type and name means something was added by hand.
+# Reconciling against it would rewrite one and orphan the other, so stop.
+- name: Fail on duplicate records rather than guessing which to rewrite
+  assert:
+    that: >-
+      mail_dns_existing.json.domain_records
+        | selectattr('type', 'eq', item.type)
+        | selectattr('name', 'eq', item.name)
+        | list | length <= 1
+    fail_msg: "More than one {{ item.type }} record named {{ item.name }} exists - resolve it in the DigitalOcean panel first."
+    quiet: true
+  loop: "{{ mail_dns_records }}"
+  loop_control:
+    label: "{{ item.type }} {{ item.name }}"
+
+- name: Create the missing mail DNS records
+  uri:
+    url: "https://api.digitalocean.com/v2/domains/{{ mail_dns_domain }}/records"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ do_api_token }}"
+    body_format: json
+    body: "{{ item | combine({'ttl': item.ttl | default(mail_dns_ttl)}) }}"
+    status_code: 201
+  vars:
+    match: >-
+      {{ mail_dns_existing.json.domain_records
+           | selectattr('type', 'eq', item.type)
+           | selectattr('name', 'eq', item.name) | list }}
+  when: match | length == 0
+  loop: "{{ mail_dns_records }}"
+  loop_control:
+    label: "{{ item.type }} {{ item.name }} -> {{ item.data }}"
+  no_log: true
+
+- name: Correct the mail DNS records that have drifted
+  uri:
+    url: "https://api.digitalocean.com/v2/domains/{{ mail_dns_domain }}/records/{{ match[0].id }}"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ do_api_token }}"
+    body_format: json
+    body: "{{ item | combine({'ttl': item.ttl | default(mail_dns_ttl)}) }}"
+    status_code: 200
+  vars:
+    match: >-
+      {{ mail_dns_existing.json.domain_records
+           | selectattr('type', 'eq', item.type)
+           | selectattr('name', 'eq', item.name) | list }}
+  when:
+    - match | length == 1
+    - (match[0].data != item.data)
+      or (item.priority is defined and match[0].priority != item.priority)
+      or (item.port is defined and match[0].port != item.port)
+  loop: "{{ mail_dns_records }}"
+  loop_control:
+    label: "{{ item.type }} {{ item.name }} -> {{ item.data }}"
+  no_log: true
