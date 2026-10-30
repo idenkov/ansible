@@ -3,5 +3,6 @@
     - ansible-vault/secrets.txt
   roles:
     - role: base
+    - role: i3
     - role: desktop
     - role: docker

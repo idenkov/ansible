@@ -1,0 +1,55 @@
+---
+
+# Package names checked against both noble (24.04) and resolute (26.04).
+- name: Install sway and Wayland packages
+  apt:
+    pkg:
+      - sway
+      - swaybg
+      - swayidle
+      - swaylock
+      - xwayland
+      - waybar
+      - fuzzel
+      - mako-notifier
+      - grim
+      - slurp
+      - wl-clipboard
+      - brightnessctl
+      - playerctl
+      - xdg-desktop-portal-wlr
+      - qtwayland5
+      - qt6-wayland
+      - policykit-1-gnome
+      - network-manager-gnome
+      - blueman
+      - pulseaudio-utils
+      - lm-sensors
+
+- name: Create required directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ remote_user }}"
+    group: "{{ remote_user }}"
+  loop:
+    - "/home/{{ remote_user }}/.config/sway"
+    - "/home/{{ remote_user }}/.config/waybar"
+
+- name: Deploy sway config
+  copy:
+    src: files/sway.conf
+    dest: "/home/{{ remote_user }}/.config/sway/config"
+    owner: "{{ remote_user }}"
+    group: "{{ remote_user }}"
+    mode: 0644
+
+# No style.css on purpose: waybar falls back to /etc/xdg/waybar/style.css.
+- name: Deploy waybar config
+  copy:
+    src: files/waybar.jsonc
+    dest: "/home/{{ remote_user }}/.config/waybar/config"
+    owner: "{{ remote_user }}"
+    group: "{{ remote_user }}"
+    mode: 0644
+

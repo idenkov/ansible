@@ -1,0 +1,47 @@
+---
+
+- name: Install i3 packages
+  apt:
+    pkg:
+      - i3
+      - i3blocks
+      - picom
+      - xautolock
+      - suckless-tools
+      - lxappearance
+      - shutter
+
+- name: Create required directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ remote_user }}"
+    group: "{{ remote_user }}"
+  loop:
+    - "/home/{{ remote_user }}/.config/i3blocks"
+    - "/home/{{ remote_user }}/.config/i3"
+    - "/home/{{ remote_user }}/.config/picom"
+
+- name: Deploy i3 config
+  copy:
+    src: files/i3.conf
+    dest: "/home/{{ remote_user }}/.config/i3/config"
+    owner: "{{ remote_user }}"
+    group: "{{ remote_user }}"
+    mode: 0644
+
+- name: Deploy i3blocks config
+  copy:
+    src: files/i3blocks.conf
+    dest: "/home/{{ remote_user }}/.config/i3blocks/i3blocks.conf"
+    owner: "{{ remote_user }}"
+    group: "{{ remote_user }}"
+    mode: 0644
+
+- name: Deploy picom config
+  copy:
+    src: files/picom.conf
+    dest: "/home/{{ remote_user }}/.config/picom/picom.conf"
+    owner: "{{ remote_user }}"
+    group: "{{ remote_user }}"
+    mode: 0644

@@ -14,13 +14,7 @@
     pkg:
       - vim
       - htop
-      - i3
-      - i3blocks
-      - picom
       - kitty
-      - xautolock
-      - suckless-tools
-      - lxappearance
       - gparted
       - synaptic
       - ncdu
@@ -36,7 +30,6 @@
       - strawberry
       - python3-pip
       - ethtool
-      - shutter
 
 - name: Remove packages
   apt:

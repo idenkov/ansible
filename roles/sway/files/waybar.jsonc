@@ -1,0 +1,58 @@
+// waybar config, mirrors the i3blocks bar from roles/i3/files/i3blocks.conf
+{
+    "position": "bottom",
+    "height": 26,
+    "modules-left": ["sway/workspaces", "sway/mode"],
+    "modules-right": [
+        "pulseaudio", "memory", "disk", "network",
+        "temperature", "load", "battery", "sway/language", "tray", "clock"
+    ],
+
+    "pulseaudio": {
+        "format": "VOL {volume}%",
+        "format-muted": "VOL muted",
+        "on-click": "pactl set-sink-mute @DEFAULT_SINK@ toggle",
+        "scroll-step": 5
+    },
+    "memory": {
+        "interval": 30,
+        "format": "MEM {used:0.1f}G  SWAP {swapUsed:0.1f}G"
+    },
+    "disk": {
+        "interval": 60,
+        "path": "/",
+        "format": "home {free}"
+    },
+    "network": {
+        "interval": 10,
+        "format-wifi": "{essid} ({signalStrength}%) {ipaddr}",
+        "format-ethernet": "{ifname} {ipaddr}",
+        "format-disconnected": "offline"
+    },
+    "temperature": {
+        "interval": 4,
+        "critical-threshold": 85,
+        "format": "{temperatureC}°C"
+    },
+    "load": {
+        "interval": 10,
+        "format": "{load1} {load5} {load15}"
+    },
+    "battery": {
+        "interval": 30,
+        "states": { "warning": 20, "critical": 10 },
+        "format": "BAT {capacity}%",
+        "format-charging": "BAT {capacity}% +",
+        "format-full": "BAT full"
+    },
+    "sway/language": {
+        "format": "{short}"
+    },
+    "tray": {
+        "spacing": 8
+    },
+    "clock": {
+        "interval": 5,
+        "format": "{:%Y-%m-%d %H:%M:%S}"
+    }
+}
