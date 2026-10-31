@@ -1,0 +1,131 @@
+/* Minimal monochrome bar: one background, muted text, a single accent.
+ * Colour only appears for the focused workspace and for warnings. */
+
+@define-color bg      #111214;
+@define-color fg      #e2e4e6;
+@define-color dim     #a3a7ad;
+@define-color accent  #8fa8c8;
+@define-color warn    #d7b46a;
+@define-color crit    #d0766f;
+
+* {
+    border: none;
+    border-radius: 0;
+    min-height: 0;
+    font-family: "Ubuntu Sans Mono", "Ubuntu Mono", monospace;
+    font-size: 19px;
+}
+
+window#waybar {
+    background: @bg;
+    color: @fg;
+    border-top: 1px solid #1e2024;
+}
+
+tooltip {
+    background: @bg;
+    border: 1px solid #2a2d32;
+}
+
+tooltip label {
+    color: @fg;
+}
+
+/* Workspaces: plain labels, focused one gets the accent + underline */
+#workspaces button {
+    padding: 0 10px;
+    background: transparent;
+    color: @dim;
+    border-bottom: 2px solid transparent;
+}
+
+#workspaces button:hover {
+    background: #1a1c1f;
+    color: @fg;
+    box-shadow: none;
+    text-shadow: none;
+}
+
+#workspaces button.focused {
+    color: @fg;
+    border-bottom: 2px solid @accent;
+}
+
+#workspaces button.urgent {
+    color: @crit;
+    border-bottom: 2px solid @crit;
+}
+
+#mode {
+    padding: 0 10px;
+    color: @bg;
+    background: @accent;
+}
+
+/* Right-hand modules: same colours, separated only by spacing */
+#pulseaudio,
+#memory,
+#disk,
+#network,
+#temperature,
+#load,
+#battery,
+#language,
+#tray,
+#clock {
+    padding: 0 10px;
+    background: transparent;
+    color: @dim;
+}
+
+/* Thin vertical divider before every right-hand module except the first */
+#memory,
+#disk,
+#network,
+#temperature,
+#load,
+#battery,
+#language,
+#tray,
+#clock {
+    border-left: 1px solid #2a2d32;
+    margin: 9px 0;
+    padding-top: 0;
+    padding-bottom: 0;
+}
+
+#pulseaudio {
+    margin: 9px 0;
+}
+
+#clock {
+    color: @fg;
+    padding-right: 12px;
+}
+
+#pulseaudio.muted,
+#network.disconnected {
+    color: #6b6f76;
+}
+
+#battery.charging {
+    color: @fg;
+}
+
+#battery.warning:not(.charging) {
+    color: @warn;
+}
+
+#battery.critical:not(.charging),
+#temperature.critical {
+    color: @crit;
+}
+
+#tray > .needs-attention {
+    background: @crit;
+}
+
+/* Without a min-width waybar squeezes this label to "…" when the bar is busy */
+#language {
+    min-width: 24px;
+}

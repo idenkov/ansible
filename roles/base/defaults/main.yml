@@ -1,0 +1,4 @@
+---
+
+# Install personal apps (strawberry). Disable on the work laptop with -e personal=false
+personal: true

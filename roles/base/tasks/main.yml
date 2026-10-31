@@ -1,8 +1,16 @@
 ---
 
+# apt_repository's ppa: shorthand is broken without apt-key (it runs `gpg --export`
+# without ever fetching the key), so define the PPA explicitly.
 - name: Add repos
-  apt_repository:
-    repo: 'ppa:jonaski/strawberry'
+  deb822_repository:
+    name: strawberry
+    types: deb
+    uris: 'https://ppa.launchpadcontent.net/jonaski/strawberry/ubuntu'
+    suites: '{{ ansible_distribution_release }}'
+    components: main
+    signed_by: 'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xBE5ED0F9261CAAD9A1E5B1A4CD6289E999EA819D'
+  when: personal | bool
 
 - name: Get the non root remote user                                                                                           
   set_fact:
@@ -21,6 +29,9 @@
     create: no
     state: present
     insertafter: EOF
+
+- name: Bash prompt
+  import_tasks: "prompt.yml"
 
 - name: Clone kitty themes repository
   git:

@@ -1,7 +1,7 @@
 // waybar config, mirrors the i3blocks bar from roles/i3/files/i3blocks.conf
 {
     "position": "bottom",
-    "height": 26,
+    "height": 40,
     "modules-left": ["sway/workspaces", "sway/mode"],
     "modules-right": [
         "pulseaudio", "memory", "disk", "network",
@@ -16,12 +16,12 @@
     },
     "memory": {
         "interval": 30,
-        "format": "MEM {used:0.1f}G  SWAP {swapUsed:0.1f}G"
+        "format": "MEM {used:0.1f}G"
     },
     "disk": {
         "interval": 60,
         "path": "/",
-        "format": "home {free}"
+        "format": "{free}"
     },
     "network": {
         "interval": 10,
@@ -49,10 +49,28 @@
         "format": "{short}"
     },
     "tray": {
-        "spacing": 8
+        "spacing": 10,
+        "icon-size": 20
     },
     "clock": {
         "interval": 5,
-        "format": "{:%Y-%m-%d %H:%M:%S}"
+        "format": "{:%Y-%m-%d %H:%M:%S}",
+        "tooltip-format": "<tt>{calendar}</tt>",
+        "calendar": {
+            "mode": "month",
+            "weeks-pos": "left",
+            "on-scroll": 1,
+            "format": {
+                "months": "<span color='#e2e4e6'><b>{}</b></span>",
+                "weeks": "<span color='#a3a7ad'>{}</span>",
+                "weekdays": "<span color='#a3a7ad'>{}</span>",
+                "today": "<span color='#8fa8c8'><b><u>{}</u></b></span>"
+            }
+        },
+        "actions": {
+            "on-scroll-up": "shift_up",
+            "on-scroll-down": "shift_down"
+        },
+        "on-click": "~/.config/waybar/calendar-toggle.sh"
     }
 }

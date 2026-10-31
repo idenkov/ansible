@@ -25,6 +25,9 @@
       - blueman
       - pulseaudio-utils
       - lm-sensors
+      # Calendar opened from the waybar clock, synced via GNOME Online Accounts
+      - gnome-calendar
+      - gnome-online-accounts-gtk
 
 - name: Create required directories
   file:
@@ -35,6 +38,9 @@
   loop:
     - "/home/{{ remote_user }}/.config/sway"
     - "/home/{{ remote_user }}/.config/waybar"
+    - "/home/{{ remote_user }}/.config/fuzzel"
+    # The kitty-themes clone in the base role leaves this owned by root
+    - "/home/{{ remote_user }}/.config/kitty"
 
 - name: Deploy sway config
   copy:
@@ -44,11 +50,43 @@
     group: "{{ remote_user }}"
     mode: 0644
 
-# No style.css on purpose: waybar falls back to /etc/xdg/waybar/style.css.
 - name: Deploy waybar config
   copy:
     src: files/waybar.jsonc
     dest: "/home/{{ remote_user }}/.config/waybar/config"
+    owner: "{{ remote_user }}"
+    group: "{{ remote_user }}"
+    mode: 0644
+
+- name: Deploy waybar style
+  copy:
+    src: files/waybar.css
+    dest: "/home/{{ remote_user }}/.config/waybar/style.css"
+    owner: "{{ remote_user }}"
+    group: "{{ remote_user }}"
+    mode: 0644
+
+- name: Deploy waybar calendar toggle script
+  copy:
+    src: files/waybar-calendar-toggle.sh
+    dest: "/home/{{ remote_user }}/.config/waybar/calendar-toggle.sh"
+    owner: "{{ remote_user }}"
+    group: "{{ remote_user }}"
+    mode: 0755
+
+- name: Deploy fuzzel config
+  copy:
+    src: files/fuzzel.ini
+    dest: "/home/{{ remote_user }}/.config/fuzzel/fuzzel.ini"
+    owner: "{{ remote_user }}"
+    group: "{{ remote_user }}"
+    mode: 0644
+
+# Larger font instead of a fractional output scale, which blurs kitty's text
+- name: Deploy kitty config
+  copy:
+    src: files/kitty.conf
+    dest: "/home/{{ remote_user }}/.config/kitty/kitty.conf"
     owner: "{{ remote_user }}"
     group: "{{ remote_user }}"
     mode: 0644

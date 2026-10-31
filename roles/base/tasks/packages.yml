@@ -27,9 +27,14 @@
       - encfs
       - git
       - hexchat
-      - strawberry
       - python3-pip
       - ethtool
+
+- name: Install personal packages
+  apt:
+    pkg:
+      - strawberry
+  when: personal | bool
 
 - name: Remove packages
   apt:

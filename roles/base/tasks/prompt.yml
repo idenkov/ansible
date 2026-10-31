@@ -1,0 +1,24 @@
+---
+
+- name: Create bash config directory
+  file:
+    path: "/home/{{ remote_user }}/.config/bash"
+    state: directory
+    owner: "{{ remote_user }}"
+    group: "{{ remote_user }}"
+
+- name: Deploy coloured bash prompt with git branch
+  copy:
+    src: "{{ playbook_dir }}/roles/base/files/bash_prompt.sh"
+    dest: "/home/{{ remote_user }}/.config/bash/prompt.sh"
+    owner: "{{ remote_user }}"
+    group: "{{ remote_user }}"
+    mode: 0644
+
+- name: Load bash prompt from .bashrc
+  lineinfile:
+    path: "/home/{{ remote_user }}/.bashrc"
+    line: '[ -f ~/.config/bash/prompt.sh ] && . ~/.config/bash/prompt.sh'
+    create: no
+    state: present
+    insertafter: EOF
