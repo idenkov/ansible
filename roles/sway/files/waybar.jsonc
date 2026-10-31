@@ -5,7 +5,7 @@
     "modules-left": ["sway/workspaces", "sway/mode"],
     "modules-right": [
         "pulseaudio", "memory", "disk", "network",
-        "temperature", "load", "battery", "sway/language", "tray", "clock"
+        "temperature", "load", "power-profiles-daemon", "battery", "sway/language", "tray", "clock"
     ],
 
     "pulseaudio": {
@@ -30,13 +30,22 @@
         "format-disconnected": "offline"
     },
     "temperature": {
-        "interval": 4,
+        "interval": 10,
         "critical-threshold": 85,
         "format": "{temperatureC}°C"
     },
     "load": {
         "interval": 10,
         "format": "{load1} {load5} {load15}"
+    },
+    "power-profiles-daemon": {
+        "format": "{icon}",
+        "format-icons": {
+            "performance": "PERF",
+            "balanced": "BAL",
+            "power-saver": "SAVE"
+        },
+        "tooltip-format": "Power profile: {profile} (click to change)"
     },
     "battery": {
         "interval": 30,

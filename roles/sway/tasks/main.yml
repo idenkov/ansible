@@ -29,6 +29,13 @@
       - gnome-calendar
       - gnome-online-accounts-gtk
 
+# brightnessctl writes /sys/class/backlight/*/brightness, which is group video
+- name: Add user to video group for brightness keys
+  user:
+    name: "{{ remote_user }}"
+    groups: video
+    append: yes
+
 - name: Create required directories
   file:
     path: "{{ item }}"
@@ -91,3 +98,31 @@
     group: "{{ remote_user }}"
     mode: 0644
 
+
+# Battery: no modem in these laptops, and network printer discovery isn't needed
+- name: Mask ModemManager
+  systemd:
+    name: ModemManager
+    enabled: no
+    state: stopped
+    masked: yes
+
+- name: Disable cups-browsed
+  systemd:
+    name: cups-browsed
+    enabled: no
+    state: stopped
+
+# On battery: dim the backlight on dark content and let the GPU idle lower.
+# Skipped on machines whose power-profiles-daemon doesn't offer the action.
+- name: Enable power-profiles-daemon AMD power saving actions
+  shell: |
+    actions=$(powerprofilesctl list-actions)
+    echo "$actions" | grep -q "^Name: {{ item }}$" || exit 0
+    echo "$actions" | grep -A2 "^Name: {{ item }}$" | grep -q "Enabled: True" && exit 0
+    powerprofilesctl configure-action {{ item }} --enable && echo changed
+  register: ppd_action
+  changed_when: "'changed' in ppd_action.stdout"
+  loop:
+    - amdgpu_panel_power
+    - amdgpu_dpm

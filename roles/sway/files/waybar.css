@@ -69,6 +69,7 @@ tooltip label {
 #network,
 #temperature,
 #load,
+#power-profiles-daemon,
 #battery,
 #language,
 #tray,
@@ -84,6 +85,7 @@ tooltip label {
 #network,
 #temperature,
 #load,
+#power-profiles-daemon,
 #battery,
 #language,
 #tray,
@@ -106,6 +108,15 @@ tooltip label {
 #pulseaudio.muted,
 #network.disconnected {
     color: #6b6f76;
+}
+
+/* Flag the profiles that change battery life */
+#power-profiles-daemon.performance {
+    color: @warn;
+}
+
+#power-profiles-daemon.power-saver {
+    color: @accent;
 }
 
 #battery.charging {
