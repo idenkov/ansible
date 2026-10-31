@@ -2,3 +2,7 @@
 
 # Install personal apps (strawberry). Disable on the work laptop with -e personal=false
 personal: true
+
+# Time locale: English, but weeks start on Monday, 24h clock, dd/mm/yyyy dates
+# (en_US starts weeks on Sunday). Language stays whatever LANG is.
+lc_time: en_GB.UTF-8

@@ -1,6 +1,28 @@
 ---
 
-# Package names checked against both noble (24.04) and resolute (26.04).
+# Laptop-only tweaks below are keyed off a battery being present.
+# Override with -e laptop=true / -e laptop=false.
+- name: Detect a battery
+  shell: ls -d /sys/class/power_supply/BAT* >/dev/null 2>&1 && echo yes || echo no
+  register: battery_check
+  changed_when: false
+
+- name: Set laptop flag
+  set_fact:
+    is_laptop: "{{ laptop | default(battery_check.stdout == 'yes') | bool }}"
+
+# Proprietary NVIDIA driver built for the running kernel (works before the first
+# reboot into it). Override with -e nvidia=true / -e nvidia=false.
+- name: Detect the NVIDIA proprietary driver
+  shell: find /lib/modules/$(uname -r) -name 'nvidia*drm.ko*' | grep -q . && echo yes || echo no
+  register: nvidia_check
+  changed_when: false
+
+- name: Set NVIDIA flag
+  set_fact:
+    has_nvidia: "{{ nvidia | default(nvidia_check.stdout == 'yes') | bool }}"
+
+# Package names checked against noble (24.04), resolute (26.04) and Debian trixie (13).
 - name: Install sway and Wayland packages
   apt:
     pkg:
@@ -20,7 +42,8 @@
       - xdg-desktop-portal-wlr
       - qtwayland5
       - qt6-wayland
-      - policykit-1-gnome
+      # Debian trixie dropped policykit-1-gnome; sway.conf starts whichever exists
+      - "{{ 'mate-polkit' if ansible_distribution == 'Debian' else 'policykit-1-gnome' }}"
       - network-manager-gnome
       - blueman
       - pulseaudio-utils
@@ -35,6 +58,7 @@
     name: "{{ remote_user }}"
     groups: video
     append: yes
+  when: is_laptop
 
 - name: Create required directories
   file:
@@ -44,6 +68,7 @@
     group: "{{ remote_user }}"
   loop:
     - "/home/{{ remote_user }}/.config/sway"
+    - "/home/{{ remote_user }}/.config/sway/config.d"
     - "/home/{{ remote_user }}/.config/waybar"
     - "/home/{{ remote_user }}/.config/fuzzel"
     # The kitty-themes clone in the base role leaves this owned by root
@@ -56,6 +81,41 @@
     owner: "{{ remote_user }}"
     group: "{{ remote_user }}"
     mode: 0644
+
+# Desktop monitor at scale 1: enlarge GTK text (Firefox, pcmanfm), like the old
+# "xrandr --dpi 120" on i3. Fractional output scaling would blur XWayland apps.
+# Note: dconf is shared, so this also applies in a GNOME session.
+- name: Deploy desktop sway overrides
+  copy:
+    dest: "/home/{{ remote_user }}/.config/sway/config.d/desktop.conf"
+    content: |
+      # Managed by ansible (roles/sway/tasks/main.yml)
+      exec_always gsettings set org.gnome.desktop.interface text-scaling-factor {{ desktop_text_scale }}
+    owner: "{{ remote_user }}"
+    group: "{{ remote_user }}"
+    mode: 0644
+  when: not is_laptop
+
+# pcmanfm icons are fixed pixel sizes and ignore the GTK text scale.
+# libfm rewrites this file when pcmanfm saves settings, so close pcmanfm first.
+- name: Enlarge pcmanfm icons on desktops
+  community.general.ini_file:
+    path: "/home/{{ remote_user }}/.config/libfm/libfm.conf"
+    section: ui
+    option: "{{ item.key }}"
+    value: "{{ item.value }}"
+    no_extra_spaces: yes
+    owner: "{{ remote_user }}"
+    group: "{{ remote_user }}"
+    mode: 0644
+  loop: "{{ desktop_pcmanfm_icons | dict2items }}"
+  when: not is_laptop
+
+- name: Remove desktop sway overrides on laptops
+  file:
+    path: "/home/{{ remote_user }}/.config/sway/config.d/desktop.conf"
+    state: absent
+  when: is_laptop
 
 - name: Deploy waybar config
   copy:
@@ -89,6 +149,34 @@
     group: "{{ remote_user }}"
     mode: 0644
 
+# GNOME Settings refuses to run outside GNOME and is hidden from fuzzel there:
+# a PATH wrapper plus a launcher entry without OnlyShowIn=GNOME.
+- name: Create user bin and applications directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ remote_user }}"
+    group: "{{ remote_user }}"
+  loop:
+    - "/home/{{ remote_user }}/.local/bin"
+    - "/home/{{ remote_user }}/.local/share/applications"
+
+- name: Deploy gnome-control-center wrapper
+  copy:
+    src: files/gnome-control-center.sh
+    dest: "/home/{{ remote_user }}/.local/bin/gnome-control-center"
+    owner: "{{ remote_user }}"
+    group: "{{ remote_user }}"
+    mode: 0755
+
+- name: Deploy GNOME Settings launcher entry
+  copy:
+    src: files/org.gnome.Settings.desktop
+    dest: "/home/{{ remote_user }}/.local/share/applications/org.gnome.Settings.desktop"
+    owner: "{{ remote_user }}"
+    group: "{{ remote_user }}"
+    mode: 0644
+
 # Larger font instead of a fractional output scale, which blurs kitty's text
 - name: Deploy kitty config
   copy:
@@ -98,6 +186,9 @@
     group: "{{ remote_user }}"
     mode: 0644
 
+- name: NVIDIA support
+  import_tasks: nvidia.yml
+  when: has_nvidia
 
 # Battery: no modem in these laptops, and network printer discovery isn't needed
 - name: Mask ModemManager
@@ -106,12 +197,14 @@
     enabled: no
     state: stopped
     masked: yes
+  when: is_laptop
 
 - name: Disable cups-browsed
   systemd:
     name: cups-browsed
     enabled: no
     state: stopped
+  when: is_laptop
 
 # On battery: dim the backlight on dark content and let the GPU idle lower.
 # Skipped on machines whose power-profiles-daemon doesn't offer the action.
@@ -123,6 +216,7 @@
     powerprofilesctl configure-action {{ item }} --enable && echo changed
   register: ppd_action
   changed_when: "'changed' in ppd_action.stdout"
+  when: is_laptop
   loop:
     - amdgpu_panel_power
     - amdgpu_dpm

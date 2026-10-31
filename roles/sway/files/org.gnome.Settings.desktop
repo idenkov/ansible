@@ -1,0 +1,13 @@
+# Overrides /usr/share/applications/org.gnome.Settings.desktop, which has
+# OnlyShowIn=GNOME and is therefore hidden from fuzzel in sway.
+# Deployed by ansible (roles/sway).
+[Desktop Entry]
+Name=Settings
+Comment=Utility to configure the GNOME desktop
+Icon=org.gnome.Settings
+Exec=env XDG_CURRENT_DESKTOP=GNOME /usr/bin/gnome-control-center
+Terminal=false
+Type=Application
+StartupNotify=true
+Categories=GNOME;GTK;Settings;
+Keywords=Preferences;Settings;gnome-control-center;

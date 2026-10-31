@@ -10,7 +10,8 @@
     suites: '{{ ansible_distribution_release }}'
     components: main
     signed_by: 'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xBE5ED0F9261CAAD9A1E5B1A4CD6289E999EA819D'
-  when: personal | bool
+  # Ubuntu-only PPA; Debian ships strawberry in main
+  when: personal | bool and ansible_distribution == 'Ubuntu'
 
 - name: Get the non root remote user                                                                                           
   set_fact:
@@ -21,6 +22,19 @@
 
 - name: Vim config
   import_tasks: "vim.yml"
+
+# Takes effect at next login
+- name: Generate time locale
+  community.general.locale_gen:
+    name: "{{ lc_time }}"
+    state: present
+
+- name: Set time locale (first day of week, date format)
+  lineinfile:
+    path: /etc/default/locale
+    regexp: '^LC_TIME='
+    line: 'LC_TIME="{{ lc_time }}"'
+    create: yes
 
 - name: env variable for kitty janky ssh behaviour
   lineinfile:

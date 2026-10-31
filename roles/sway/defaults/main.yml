@@ -1,0 +1,10 @@
+---
+
+# GTK text scale on desktops (no battery). Override with -e desktop_text_scale=1.5
+desktop_text_scale: 1.25
+
+# pcmanfm icon sizes on desktops (libfm defaults: 48 / 24 / 24)
+desktop_pcmanfm_icons:
+  big_icon_size: 64
+  small_icon_size: 32
+  pane_icon_size: 32

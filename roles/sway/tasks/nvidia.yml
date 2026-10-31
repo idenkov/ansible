@@ -1,0 +1,45 @@
+---
+
+# Sway on the proprietary NVIDIA driver (550+). Needs:
+#  - nvidia-drm.modeset=1: without it there's no KMS, so no sway and GDM falls back to X11
+#  - PreserveVideoMemoryAllocations=1: GDM's udev rule (61-gdm.rules) disables Wayland
+#    on NVIDIA without it; it also keeps suspend/resume from corrupting the screen.
+#    VRAM is dumped to /var/tmp, not /tmp, which may be RAM-backed (tmpfs).
+#  - sway --unsupported-gpu, via a separate GDM session entry.
+
+- name: Create GRUB drop-in directory
+  file:
+    path: /etc/default/grub.d
+    state: directory
+    mode: 0755
+
+- name: Set NVIDIA kernel parameters for GRUB
+  copy:
+    dest: /etc/default/grub.d/nvidia-wayland.cfg
+    content: |
+      # Managed by ansible (roles/sway/tasks/nvidia.yml)
+      GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT nvidia-drm.modeset=1 nvidia-drm.fbdev=1 nvidia.NVreg_PreserveVideoMemoryAllocations=1 nvidia.NVreg_TemporaryFilePath=/var/tmp"
+    mode: 0644
+  notify: Update grub
+
+- name: Enable NVIDIA suspend/resume services
+  systemd:
+    name: "{{ item }}"
+    enabled: yes
+  loop:
+    - nvidia-suspend
+    - nvidia-resume
+    - nvidia-hibernate
+
+- name: Add "Sway (NVIDIA)" login session
+  copy:
+    dest: /usr/share/wayland-sessions/sway-nvidia.desktop
+    content: |
+      [Desktop Entry]
+      Name=Sway (NVIDIA)
+      Comment=Sway with --unsupported-gpu for the proprietary NVIDIA driver
+      # Hardware cursors are unreliable on NVIDIA with wlroots (invisible/stuck cursor)
+      Exec=env WLR_NO_HARDWARE_CURSORS=1 sway --unsupported-gpu
+      Type=Application
+      DesktopNames=sway
+    mode: 0644
