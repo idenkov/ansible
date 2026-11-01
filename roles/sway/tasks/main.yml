@@ -179,14 +179,35 @@
     group: "{{ remote_user }}"
     mode: 0644
 
-# Larger font instead of a fractional output scale, which blurs kitty's text
+# Larger font instead of a fractional output scale, which blurs kitty's text.
+# Only ansible's marked block is managed, so the theme block that
+# "kitty +kitten themes" writes into kitty.conf survives.
 - name: Deploy kitty config
-  copy:
-    src: files/kitty.conf
-    dest: "/home/{{ remote_user }}/.config/kitty/kitty.conf"
+  blockinfile:
+    path: "/home/{{ remote_user }}/.config/kitty/kitty.conf"
+    block: "{{ lookup('file', 'kitty.conf') }}"
+    insertbefore: BOF
+    create: yes
     owner: "{{ remote_user }}"
     group: "{{ remote_user }}"
     mode: 0644
+
+# Default kitty theme (Monokai). Not overwritten once present, so a theme picked
+# locally with "kitty +kitten themes" is kept.
+- name: Deploy default kitty theme
+  copy:
+    src: files/kitty-theme.conf
+    dest: "/home/{{ remote_user }}/.config/kitty/current-theme.conf"
+    force: no
+    owner: "{{ remote_user }}"
+    group: "{{ remote_user }}"
+    mode: 0644
+
+- name: Load kitty theme
+  lineinfile:
+    path: "/home/{{ remote_user }}/.config/kitty/kitty.conf"
+    regexp: '^include current-theme\.conf'
+    line: include current-theme.conf
 
 - name: NVIDIA support
   import_tasks: nvidia.yml
@@ -235,6 +256,8 @@
 
 # Stop charging at 80%, resume below 75%, to slow battery wear.
 # Skipped on batteries without charge threshold support.
+# ACTION=="add" only: writing the thresholds makes the EC emit a battery
+# "change" event, so matching every event loops forever and hangs ACPI.
 - name: Check battery charge threshold support
   stat:
     path: /sys/class/power_supply/BAT0/charge_control_end_threshold
@@ -245,11 +268,13 @@
   copy:
     dest: /etc/udev/rules.d/99-battery-charge-limit.rules
     content: |
-      SUBSYSTEM=="power_supply", KERNEL=="BAT0", ATTR{charge_control_end_threshold}="80", ATTR{charge_control_start_threshold}="75"
+      ACTION=="add", SUBSYSTEM=="power_supply", KERNEL=="BAT0", ATTR{charge_control_end_threshold}="80", ATTR{charge_control_start_threshold}="75"
     mode: 0644
   register: charge_rule
   when: is_laptop and charge_threshold.stat.exists
 
 - name: Apply battery charge limit now
-  command: udevadm trigger --subsystem-match=power_supply --sysname-match=BAT0 --action=change
+  shell: |
+    echo 80 > /sys/class/power_supply/BAT0/charge_control_end_threshold
+    echo 75 > /sys/class/power_supply/BAT0/charge_control_start_threshold
   when: charge_rule is changed
