@@ -2,3 +2,6 @@ all:
   hosts:
     127.0.0.1:
       ansible_connection: local
+      # Ubuntu 26.04's default sudo-rs rewrites ansible's password prompt, so
+      # -K times out. Use classic sudo (sudo.ws) where it's installed.
+      ansible_become_exe: "{{ lookup('pipe', 'command -v sudo.ws || echo sudo') }}"

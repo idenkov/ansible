@@ -34,6 +34,8 @@
       - waybar
       - fuzzel
       - mako-notifier
+      # Per-window keyboard layout
+      - swaykbdd
       - grim
       - slurp
       - wl-clipboard
@@ -220,3 +222,34 @@
   loop:
     - amdgpu_panel_power
     - amdgpu_dpm
+
+# Bluetooth stays powered off after boot until turned on from blueman.
+# Takes effect on next boot (no restart, so live connections aren't dropped).
+- name: Keep bluetooth off at boot
+  lineinfile:
+    path: /etc/bluetooth/main.conf
+    regexp: '^#?AutoEnable='
+    line: AutoEnable=false
+    insertafter: '^\[Policy\]'
+  when: is_laptop
+
+# Stop charging at 80%, resume below 75%, to slow battery wear.
+# Skipped on batteries without charge threshold support.
+- name: Check battery charge threshold support
+  stat:
+    path: /sys/class/power_supply/BAT0/charge_control_end_threshold
+  register: charge_threshold
+  when: is_laptop
+
+- name: Deploy battery charge limit udev rule
+  copy:
+    dest: /etc/udev/rules.d/99-battery-charge-limit.rules
+    content: |
+      SUBSYSTEM=="power_supply", KERNEL=="BAT0", ATTR{charge_control_end_threshold}="80", ATTR{charge_control_start_threshold}="75"
+    mode: 0644
+  register: charge_rule
+  when: is_laptop and charge_threshold.stat.exists
+
+- name: Apply battery charge limit now
+  command: udevadm trigger --subsystem-match=power_supply --sysname-match=BAT0 --action=change
+  when: charge_rule is changed
