@@ -135,8 +135,8 @@
   when: is_laptop
 
 - name: Deploy waybar config
-  copy:
-    src: files/waybar.jsonc
+  template:
+    src: templates/waybar.jsonc.j2
     dest: "/home/{{ remote_user }}/.config/waybar/config"
     owner: "{{ remote_user }}"
     group: "{{ remote_user }}"

@@ -5,7 +5,7 @@
     "modules-left": ["sway/workspaces", "sway/mode"],
     "modules-right": [
         "pulseaudio", "memory", "disk", "network",
-        "temperature", "load", "power-profiles-daemon", "battery", "sway/language", "tray", "clock"
+        "temperature", "load", {% if is_laptop %}"power-profiles-daemon", {% endif %}"battery", "sway/language", "tray", "clock"
     ],
 
     "pulseaudio": {
