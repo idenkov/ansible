@@ -158,6 +158,14 @@
     group: "{{ remote_user }}"
     mode: 0755
 
+- name: Deploy waybar Wi-Fi menu script
+  copy:
+    src: files/waybar-wifi-menu.sh
+    dest: "/home/{{ remote_user }}/.config/waybar/wifi-menu.sh"
+    owner: "{{ remote_user }}"
+    group: "{{ remote_user }}"
+    mode: 0755
+
 - name: Deploy fuzzel config
   copy:
     src: files/fuzzel.ini
