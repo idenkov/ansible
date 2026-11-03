@@ -33,7 +33,7 @@
       - xwayland
       - waybar
       - fuzzel
-      - mako-notifier
+      - sway-notification-center
       # Per-window keyboard layout
       - swaykbdd
       - grim
@@ -75,6 +75,7 @@
     - "/home/{{ remote_user }}/.config/fuzzel"
     # The kitty-themes clone in the base role leaves this owned by root
     - "/home/{{ remote_user }}/.config/kitty"
+    - "/home/{{ remote_user }}/.config/systemd/user"
 
 - name: Deploy sway config
   copy:
@@ -83,6 +84,20 @@
     owner: "{{ remote_user }}"
     group: "{{ remote_user }}"
     mode: 0644
+
+# Replaced by swaync (sway-notification-center). The sway config no longer execs
+# mako, but mako-notifier ships an enabled /usr/lib/systemd/user/mako.service that
+# would otherwise autostart and race swaync for the org.freedesktop.Notifications
+# D-Bus name on login. Masking it the same way "systemctl --user mask" does (a
+# symlink to /dev/null) avoids needing a live user D-Bus session during the run.
+- name: Mask mako notification daemon
+  file:
+    src: /dev/null
+    dest: "/home/{{ remote_user }}/.config/systemd/user/mako.service"
+    state: link
+    force: yes
+    owner: "{{ remote_user }}"
+    group: "{{ remote_user }}"
 
 # Desktop monitor at scale 1: enlarge GTK text (Firefox, pcmanfm), like the old
 # "xrandr --dpi 120" on i3. Fractional output scaling would blur XWayland apps.
