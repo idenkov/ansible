@@ -31,6 +31,8 @@
       - swayidle
       - swaylock
       - xwayland
+      # xhost: allow root X11 apps (gparted) on XWayland
+      - x11-xserver-utils
       - waybar
       - fuzzel
       - sway-notification-center
