@@ -2,3 +2,8 @@
 
 - name: Update grub
   command: update-grub
+
+# SIGHUP makes logind re-read its config without ending the graphical session
+- name: Reload logind
+  command: systemctl kill -s HUP systemd-logind
+  become: yes

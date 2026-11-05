@@ -64,6 +64,20 @@
     append: yes
   when: is_laptop
 
+# Suspend on lid close, except when an external monitor is connected (docked).
+- name: Configure lid switch behaviour
+  copy:
+    dest: /etc/systemd/logind.conf.d/lid.conf
+    content: |
+      [Login]
+      HandleLidSwitch=suspend
+      HandleLidSwitchExternalPower=suspend
+      HandleLidSwitchDocked=ignore
+    mode: "0644"
+  when: is_laptop
+  become: yes
+  notify: Reload logind
+
 - name: Create required directories
   file:
     path: "{{ item }}"
@@ -167,6 +181,24 @@
     owner: "{{ remote_user }}"
     group: "{{ remote_user }}"
     mode: 0755
+
+- name: Deploy waybar power profile script
+  copy:
+    src: files/waybar-power-profile.sh
+    dest: "/home/{{ remote_user }}/.config/waybar/power-profile.sh"
+    owner: "{{ remote_user }}"
+    group: "{{ remote_user }}"
+    mode: 0755
+  when: is_laptop
+
+- name: Deploy waybar lid toggle script
+  copy:
+    src: files/waybar-lid-toggle.sh
+    dest: "/home/{{ remote_user }}/.config/waybar/lid-toggle.sh"
+    owner: "{{ remote_user }}"
+    group: "{{ remote_user }}"
+    mode: 0755
+  when: is_laptop
 
 - name: Deploy fuzzel config
   copy:

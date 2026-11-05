@@ -69,7 +69,8 @@ tooltip label {
 #network,
 #temperature,
 #load,
-#power-profiles-daemon,
+#custom-power-profile,
+#custom-lid,
 #battery,
 #language,
 #tray,
@@ -85,7 +86,8 @@ tooltip label {
 #network,
 #temperature,
 #load,
-#power-profiles-daemon,
+#custom-power-profile,
+#custom-lid,
 #battery,
 #language,
 #tray,
@@ -111,11 +113,11 @@ tooltip label {
 }
 
 /* Flag the profiles that change battery life */
-#power-profiles-daemon.performance {
+#custom-power-profile.performance {
     color: @warn;
 }
 
-#power-profiles-daemon.power-saver {
+#custom-power-profile.power-saver {
     color: @accent;
 }
 

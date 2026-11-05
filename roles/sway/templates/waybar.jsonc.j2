@@ -5,7 +5,7 @@
     "modules-left": ["sway/workspaces", "sway/mode"],
     "modules-right": [
         "pulseaudio", "memory", "disk", "network",
-        "temperature", "load", {% if is_laptop %}"power-profiles-daemon", {% endif %}"battery", "sway/language", "tray", "clock"
+        "temperature", "load", {% if is_laptop %}"custom/power-profile", "custom/lid", {% endif %}"battery", "sway/language", "tray", "clock"
     ],
 
     "pulseaudio": {
@@ -39,14 +39,19 @@
         "interval": 10,
         "format": "{load1} {load5} {load15}"
     },
-    "power-profiles-daemon": {
-        "format": "{icon}",
-        "format-icons": {
-            "performance": "PERF",
-            "balanced": "BAL",
-            "power-saver": "SAVE"
-        },
-        "tooltip-format": "Power profile: {profile} (click to change)"
+    "custom/power-profile": {
+        "exec": "~/.config/waybar/power-profile.sh status",
+        "return-type": "json",
+        "interval": 10,
+        "signal": 9,
+        "on-click": "~/.config/waybar/power-profile.sh"
+    },
+    "custom/lid": {
+        "exec": "~/.config/waybar/lid-toggle.sh status",
+        "return-type": "json",
+        "interval": "once",
+        "signal": 8,
+        "on-click": "~/.config/waybar/lid-toggle.sh"
     },
     "battery": {
         "interval": 30,
