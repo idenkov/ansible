@@ -65,6 +65,14 @@
   when: is_laptop
 
 # Suspend on lid close, except when an external monitor is connected (docked).
+- name: Create logind drop-in directory
+  file:
+    path: /etc/systemd/logind.conf.d
+    state: directory
+    mode: "0755"
+  when: is_laptop
+  become: yes
+
 - name: Configure lid switch behaviour
   copy:
     dest: /etc/systemd/logind.conf.d/lid.conf
