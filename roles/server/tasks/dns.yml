@@ -1,68 +1,82 @@
 ---
+# Dynamic DNS: keeps the A records listed in cf_dns_a_records (vault) pointed
+# at the WAN address, via the Cloudflare API. Both zones moved from
+# DigitalOcean to Cloudflare in 2026-11; the old do-dns-update units are
+# retired at the bottom of this file.
 
-- name: Install the DigitalOcean DNS update script
+- name: Check the dynamic DNS variables came from the vault
+  assert:
+    that:
+      - cf_dns_a_records is defined
+      - cf_dns_a_records | length > 0
+      - cloudflare_api_token is defined
+    fail_msg: >-
+      cf_dns_a_records and cloudflare_api_token must come from
+      ansible-vault/secrets.txt - run with --ask-vault-password.
+    quiet: true
+
+- name: Install the Cloudflare DNS update script
   become: true
   template:
-    src: "files/do-dns-update.sh.j2"
-    dest: "{{ do_dns_script }}"
+    src: "files/cf-dns-update.sh.j2"
+    dest: "{{ cf_dns_script }}"
     owner: root
     group: root
     mode: '0750'
 
-- name: Create the DigitalOcean credentials directory
+- name: Create the Cloudflare credentials directory
   become: true
   file:
-    path: "{{ do_dns_envfile | dirname }}"
+    path: "{{ cf_dns_envfile | dirname }}"
     state: directory
     owner: root
     group: root
     mode: '0700'
 
-- name: Install the DigitalOcean API credentials file
+- name: Install the Cloudflare API credentials file
   become: true
   copy:
-    dest: "{{ do_dns_envfile }}"
+    dest: "{{ cf_dns_envfile }}"
     owner: root
     group: root
     mode: '0600'
     content: |
-      DO_API_TOKEN='{{ do_api_token }}'
+      CF_API_TOKEN='{{ cloudflare_api_token }}'
   no_log: true
-  when: do_api_token is defined
 
 - name: Install the DNS update service unit
   become: true
   copy:
-    dest: "/etc/systemd/system/{{ do_dns_service }}.service"
+    dest: "/etc/systemd/system/{{ cf_dns_service }}.service"
     owner: root
     group: root
     mode: '0644'
     content: |
       [Unit]
-      Description=Update the dynamic A records at DigitalOcean
+      Description=Update the dynamic A records at Cloudflare
       After=network-online.target
       Wants=network-online.target
 
       [Service]
       Type=oneshot
-      ExecStart={{ do_dns_script }}
+      ExecStart={{ cf_dns_script }}
       StandardInput=null
   notify: Reload systemd
 
 - name: Install the DNS update timer unit
   become: true
   copy:
-    dest: "/etc/systemd/system/{{ do_dns_service }}.timer"
+    dest: "/etc/systemd/system/{{ cf_dns_service }}.timer"
     owner: root
     group: root
     mode: '0644'
     content: |
       [Unit]
-      Description=Refresh the dynamic A records every {{ do_dns_interval }}
+      Description=Refresh the dynamic A records every {{ cf_dns_interval }}
 
       [Timer]
-      OnBootSec={{ do_dns_boot_delay }}
-      OnUnitActiveSec={{ do_dns_interval }}
+      OnBootSec={{ cf_dns_boot_delay }}
+      OnUnitActiveSec={{ cf_dns_interval }}
       # A missed window is worthless here - only the current address matters.
       Persistent=false
 
@@ -73,9 +87,36 @@
 - name: Enable the DNS update timer
   become: true
   systemd:
-    name: "{{ do_dns_service }}.timer"
+    name: "{{ cf_dns_service }}.timer"
     enabled: true
     state: started
     daemon_reload: true
   when: not ansible_check_mode
 
+# --- retire the DigitalOcean updater ----------------------------------------
+# DO is no longer authoritative, so the old timer would keep "succeeding"
+# against a zone nobody queries. Safe to delete this block once it has run.
+
+- name: Stop and disable the old DigitalOcean DNS timer
+  become: true
+  systemd:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+  loop:
+    - do-dns-update.timer
+    - do-dns-update.service
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: Remove the old DigitalOcean DNS units, script and credentials
+  become: true
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/do-dns-update.timer
+    - /etc/systemd/system/do-dns-update.service
+    - /usr/local/sbin/do-dns-update.sh
+    - /root/.config/do-dns
+  notify: Reload systemd

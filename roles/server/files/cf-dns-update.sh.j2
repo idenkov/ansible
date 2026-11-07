@@ -1,0 +1,173 @@
+#!/bin/bash
+# Managed by Ansible - roles/server/files/cf-dns-update.sh.j2. Do not edit in place.
+#
+# Points every A record below at this host's current WAN address, via the
+# Cloudflare API:
+{% for t in cf_dns_a_records %}
+#   {{ t.name if t.name != '@' else '' }}{{ '.' if t.name != '@' else '' }}{{ t.zone }}
+{% endfor %}
+#
+# Run by {{ cf_dns_service }}.timer every {{ cf_dns_interval }}.
+#
+#   sudo {{ cf_dns_script }} --dry-run
+#   sudo {{ cf_dns_script }}
+#
+# Zones and records are resolved by name at run time rather than by a stored
+# id, so a record recreated by hand in the Cloudflare dashboard is picked up on
+# the next run. A listed name with no record at all is created, unproxied.
+# An existing record's proxied flag is left as it is.
+
+set -euo pipefail
+
+ENVFILE={{ cf_dns_envfile }}
+LOCKFILE=/run/lock/cf-dns-update.lock
+TTL={{ cf_dns_ttl }}
+API=https://api.cloudflare.com/client/v4
+
+# 'zone name' per line; name '@' is the zone apex.
+TARGETS=(
+{% for t in cf_dns_a_records %}
+    '{{ t.zone }} {{ t.name }}'
+{% endfor %}
+)
+
+DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1
+
+say() { echo "  $*"; }
+die() { echo "FAILED: $*" >&2; exit 1; }
+
+# One bad record must not stop the others - a wrong address on mail. is worth
+# fixing even if autodiscover. is broken. Tracked here, reported at the end.
+FAILED=0
+warn() { echo "  !! $*" >&2; FAILED=1; }
+
+[ "$(id -u)" -eq 0 ] || die "run me with sudo"
+
+# An IPv4 dotted quad with every octet in range. Anything else is a captive
+# portal, an error page or a truncated response - never a value to publish.
+valid_ip() {
+    local ip=$1 o
+    [[ $ip =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+    for o in ${ip//./ }; do
+        [ "$o" -le 255 ] || return 1
+    done
+    return 0
+}
+
+# Overlapping runs would race each other into conflicting writes. A run that
+# is still going is not an error at this frequency, so exit quietly.
+exec 9>"$LOCKFILE"
+flock -n 9 || { say "another run is still in progress - skipping"; exit 0; }
+
+[ -r "$ENVFILE" ] || die "$ENVFILE is missing - is cloudflare_api_token set in the vault?"
+# shellcheck disable=SC1090
+. "$ENVFILE"
+[ -n "${CF_API_TOKEN:-}" ] || die "CF_API_TOKEN is empty in $ENVFILE"
+
+BODY=$(mktemp); trap 'rm -f "$BODY"' EXIT
+
+# Wraps curl so every call checks the result the same way. Cloudflare can
+# answer 200 with success:false, so both the status code and the envelope's
+# success flag must agree. Response lands in $BODY.
+api() {
+    local method=$1 url=$2 data=${3:-} code
+    local args=(-sS --max-time 20 -o "$BODY" -w '%{http_code}' -X "$method"
+                -H 'Content-Type: application/json'
+                -H "Authorization: Bearer ${CF_API_TOKEN}")
+    [ -n "$data" ] && args+=(-d "$data")
+    code=$(curl "${args[@]}" "$url") || return 1
+    if [ "$code" != 200 ] || ! jq -e '.success == true' < "$BODY" >/dev/null 2>&1; then
+        echo "HTTP $code: $(jq -c '.errors // empty' < "$BODY" 2>/dev/null || head -c 200 "$BODY")" >&2
+        return 1
+    fi
+}
+
+# --- current WAN address ----------------------------------------------------
+# Several providers, because a single one being down must not stall DNS. The
+# first well-formed answer wins.
+NIP=""
+for url in {{ cf_dns_ip_endpoints | join(' ') }}; do
+    candidate=$(curl -fsS --max-time 10 "$url" 2>/dev/null | tr -d '[:space:]') || continue
+    if valid_ip "$candidate"; then
+        NIP=$candidate
+        say "WAN address:  $NIP  (via $url)"
+        break
+    fi
+    say "ignoring junk from $url: ${candidate:0:40}"
+done
+[ -n "$NIP" ] || die "no endpoint returned a usable address - leaving DNS alone"
+
+# --- reconcile each record --------------------------------------------------
+declare -A ZONE_IDS=()
+
+for target in "${TARGETS[@]}"; do
+    zone=${target% *}
+    name=${target#* }
+    if [ "$name" = "@" ]; then host=$zone; else host="${name}.${zone}"; fi
+
+    # Zone ids are looked up once per run and cached for the remaining names.
+    if [ -z "${ZONE_IDS[$zone]:-}" ]; then
+        if ! api GET "${API}/zones?name=${zone}"; then
+            warn "$zone: zone lookup failed - skipping $host"
+            continue
+        fi
+        zid=$(jq -re '.result[0].id // empty' < "$BODY") || {
+            warn "$zone: not visible to this token - skipping $host"; continue; }
+        ZONE_IDS[$zone]=$zid
+    fi
+    base="${API}/zones/${ZONE_IDS[$zone]}/dns_records"
+
+    if ! api GET "${base}?type=A&name=${host}&per_page=100"; then
+        warn "$host: lookup failed - skipping"
+        continue
+    fi
+
+    count=$(jq -re '.result | length' < "$BODY") || { warn "$host: unexpected list payload"; continue; }
+
+    # Two A records for one name is round-robin, deliberate or not. Guessing
+    # which to rewrite would silently drop the other, so leave both alone.
+    if [ "$count" -gt 1 ]; then
+        warn "$host: $count A records exist - refusing to guess which to update"
+        continue
+    fi
+
+    if [ "$count" -eq 0 ]; then
+        if [ $DRY -eq 1 ]; then
+            say "would create $host -> $NIP"
+            continue
+        fi
+        say "creating     $host -> $NIP"
+        api POST "$base" "{\"type\":\"A\",\"name\":\"${host}\",\"content\":\"${NIP}\",\"ttl\":${TTL},\"proxied\":false}" \
+            || warn "$host: create failed"
+        continue
+    fi
+
+    rid=$(jq -re '.result[0].id' < "$BODY")
+    cip=$(jq -re '.result[0].content' < "$BODY")
+    proxied=$(jq -r '.result[0].proxied' < "$BODY")
+    note=""; [ "$proxied" = "true" ] && note="  [proxied]"
+
+    if [ "$NIP" = "$cip" ]; then
+        say "unchanged    $host  ($cip)$note"
+        continue
+    fi
+
+    if [ $DRY -eq 1 ]; then
+        say "would update $host  $cip -> $NIP$note"
+        continue
+    fi
+
+    say "updating     $host  $cip -> $NIP$note"
+    # PATCH touches only content, so proxied/ttl/comment set in the dashboard survive.
+    if ! api PATCH "${base}/${rid}" "{\"content\":\"${NIP}\"}"; then
+        warn "$host: update failed"
+        continue
+    fi
+
+    # Trust the echoed record, not the status code.
+    got=$(jq -re '.result.content' < "$BODY") || { warn "$host: unexpected PATCH payload"; continue; }
+    [ "$got" = "$NIP" ] || warn "$host: API accepted the write but reports $got"
+done
+
+[ $FAILED -eq 0 ] || die "one or more records did not reconcile"
+echo "OK - {{ cf_dns_a_records | length }} record(s) point at $NIP"
