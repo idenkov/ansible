@@ -1,0 +1,172 @@
+#!/bin/bash
+# Managed by Ansible - roles/server/files/glacier-backup.sh.j2. Do not edit in place.
+#
+#   sudo {{ glacier_script }} --dry-run   # show what would be uploaded/deleted, change nothing
+#   sudo {{ glacier_script }}
+#
+# Off-site cold copy to S3 Glacier Deep Archive through the glacier-crypt remote.
+#
+# Upload is `rclone copy`, never `sync`. Deletions in the bucket are done
+# separately by prune_job, and only for a file that BOTH
+#   - was uploaded at least {{ glacier_prune_min_age_days }} days ago, so Deep Archive's 180-day
+#     minimum is already paid and deleting it costs nothing extra, and
+#   - has been missing locally on every run for at least {{ glacier_prune_grace_days }} days,
+#     so something deleted by mistake stays recoverable off-site for that long.
+# "Missing since" is tracked in {{ glacier_state_dir }}; the upload age alone is not enough,
+# because a file uploaded a year ago and deleted yesterday would otherwise go now.
+
+set -euo pipefail
+
+RCLONE={{ rclone_bin }}
+LOCKFILE=/run/lock/glacier-backup.lock
+SRC_MOUNT={{ glacier_src_mount }}
+STATE_DIR={{ glacier_state_dir }}
+MIN_AGE_DAYS={{ glacier_prune_min_age_days }}
+GRACE_DAYS={{ glacier_prune_grace_days }}
+PRUNE_MAX={{ glacier_prune_max }}
+
+# local dir | path under glacier-crypt: | prune (yes/no)
+JOBS=(
+{% for j in glacier_jobs %}
+    "{{ j.src }}|{{ j.dest }}|{{ 'yes' if j.prune | default(false) else 'no' }}"
+{% endfor %}
+)
+
+EXCLUDES=(
+{% for e in glacier_excludes + (glacier_vault_excludes | default([])) %}
+    --exclude "{{ e }}"
+{% endfor %}
+)
+
+DRY=()
+case "${1:-}" in
+    --dry-run) DRY=(--dry-run) ;;
+    "")        ;;
+    *)         echo "unknown option: $1" >&2; exit 2 ;;
+esac
+
+[ "$(id -u)" -eq 0 ] || { echo "run me with sudo" >&2; exit 1; }
+
+say() { echo "  $*"; }
+die() { echo "FAILED: $*" >&2; exit 1; }
+
+# Deletes remote files that are both old enough to be free to delete and have
+# been gone locally for the whole grace period. Returns non-zero on any doubt;
+# the caller treats that as a failed run, and nothing is deleted.
+prune_job() {
+    local src=$1 dest=$2 work state n total
+    work=$(mktemp -d)
+    state="$STATE_DIR/${dest//\//_}.missing"
+    touch "$state"
+
+    say "prune: listing local and remote..."
+    # pipefail makes a listing error fail the function rather than produce a
+    # short list - a short local list would make everything look deleted.
+    "$RCLONE" lsf -R --files-only "${EXCLUDES[@]}" "$src" \
+        | LC_ALL=C sort > "$work/local" || { rm -rf "$work"; return 1; }
+    # --use-server-modtime: the time shown is the S3 upload time, which is what
+    # the 180-day minimum counts from, and it avoids a HEAD request per object.
+    "$RCLONE" lsf -R --files-only --format tp --separator $'\t' --use-server-modtime \
+        "${EXCLUDES[@]}" "glacier-crypt:$dest" > "$work/remote" || { rm -rf "$work"; return 1; }
+
+    cut -f2- "$work/remote" | LC_ALL=C sort > "$work/remote_paths"
+    LC_ALL=C comm -13 "$work/local" "$work/remote_paths" > "$work/missing"
+
+    # Carry each path's first-missing date forward; paths that came back or
+    # were already deleted drop out. FILENAME, not FNR==NR: the state file is
+    # empty on the first run, and FNR==NR would then swallow the second file.
+    awk -F'\t' -v today="$(date +%F)" '
+        FILENAME == ARGV[1] { seen[$1] = $2; next }
+        { print $0 "\t" (($0 in seen) ? seen[$0] : today) }
+    ' "$state" "$work/missing" > "$work/state.new"
+
+    # Same formats rclone lsf and date print, so plain string compares work.
+    local age_cut grace_cut
+    age_cut=$(date -d "$MIN_AGE_DAYS days ago" '+%Y-%m-%d %H:%M:%S')
+    grace_cut=$(date -d "$GRACE_DAYS days ago" +%F)
+    awk -F'\t' -v a="$age_cut" -v g="$grace_cut" '
+        FILENAME == ARGV[1] { if ($2 <= g) gone[$1] = 1; next }
+        ($1 <= a) && ($2 in gone) { print $2 }
+    ' "$work/state.new" "$work/remote" > "$work/candidates"
+
+    n=$(wc -l < "$work/candidates")
+    total=$(wc -l < "$work/remote")
+    say "prune: remote $total, missing locally $(wc -l < "$work/missing"), deletable $n"
+
+    if [ "$n" -gt "$PRUNE_MAX" ]; then
+        echo "FAILED: $n deletions exceeds glacier_prune_max=$PRUNE_MAX - nothing deleted." >&2
+        echo "        Check the list, then raise the limit for one run if it is genuine:" >&2
+        cp "$work/candidates" "$STATE_DIR/${dest//\//_}.refused"
+        echo "        $STATE_DIR/${dest//\//_}.refused" >&2
+        rm -rf "$work"; return 1
+    fi
+
+    if [ "$n" -gt 0 ]; then
+        sed 's/^/    delete: /' "$work/candidates" | head -50
+        [ "$n" -gt 50 ] && say "    ... and $((n - 50)) more"
+        "$RCLONE" delete "glacier-crypt:$dest" "${DRY[@]}" \
+            --files-from-raw "$work/candidates" \
+            --log-level NOTICE || { rm -rf "$work"; return 1; }
+    fi
+
+    # A dry run observes but must not start anyone's grace clock.
+    # Test with -z, not the array-length form: brace-hash opens a Jinja comment.
+    if [ -z "${DRY[*]}" ]; then mv "$work/state.new" "$state"; fi
+    rm -rf "$work"
+}
+
+echo "=============================================================="
+echo " GLACIER BACKUP  (${DRY[*]:-live})"
+echo "=============================================================="
+say "date:  $(date -Is)"
+
+[ -x "$RCLONE" ] || die "$RCLONE missing"
+
+# The data disks are mounted nofail. copy never deletes, so an empty mount
+# cannot wipe the bucket - but it would make this run "succeed" while backing up
+# nothing, and the prune would start counting every file as missing.
+mountpoint -q "$SRC_MOUNT" || die "$SRC_MOUNT is not mounted"
+
+mkdir -p "$STATE_DIR"; chmod 700 "$STATE_DIR"
+
+exec 9>"$LOCKFILE"
+flock -n 9 || die "another glacier backup is still running"
+
+RC=0
+for job in "${JOBS[@]}"; do
+    IFS='|' read -r src dest prune <<< "$job"
+    echo
+    say "$src  ->  glacier-crypt:$dest  (prune: $prune)"
+    [ -d "$src" ] || { echo "FAILED: $src does not exist" >&2; RC=1; continue; }
+    n=$(find "$src" -maxdepth 1 -mindepth 1 | wc -l)
+    [ "$n" -ge 1 ] || { echo "FAILED: $src is empty" >&2; RC=1; continue; }
+
+    # NOTICE level = errors plus a one-line progress summary every
+    # {{ glacier_stats_interval }}; per-file lines would put ~400k entries in the
+    # journal on the first run.
+    if ! "$RCLONE" copy "$src" "glacier-crypt:$dest" \
+        "${DRY[@]}" \
+        "${EXCLUDES[@]}" \
+        --transfers {{ glacier_transfers }} \
+        --checkers {{ glacier_checkers }} \
+{% if glacier_bwlimit %}
+        --bwlimit "{{ glacier_bwlimit }}" \
+{% endif %}
+        --stats {{ glacier_stats_interval }} \
+        --stats-one-line \
+        --stats-log-level NOTICE \
+        --log-level NOTICE
+    then
+        # Never prune after a failed copy.
+        echo "FAILED: rclone copy failed for $src - not pruning" >&2
+        RC=1; continue
+    fi
+
+    if [ "$prune" = yes ]; then
+        prune_job "$src" "$dest" || { echo "FAILED: prune for $dest" >&2; RC=1; }
+    fi
+done
+
+echo
+[ "$RC" -eq 0 ] && echo "OK" || echo "FINISHED WITH ERRORS"
+exit "$RC"

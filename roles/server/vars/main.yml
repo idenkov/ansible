@@ -104,16 +104,98 @@ nc_sqldump_keep: 8
 nc_sqldump_min_mb: 10
 nc_sqldump_gzip_level: 9
 nc_sqldump_oncalendar: "Tue *-*-* 04:02:00"
-duplicacy_script: /usr/local/sbin/duplicacy-backup.sh
-duplicacy_bin_candidates: "/root/duplicacy /root/bin/duplicacy /usr/local/bin/duplicacy /opt/duplicacy/duplicacy"
-duplicacy_pref_home: /root
-duplicacy_repo: /mnt/ncloud/owncloud
-duplicacy_repo_mount: /mnt/ncloud
-duplicacy_envfile: /root/.duplicacy/env
-duplicacy_threads: 4
-# Nothing currently in the storage is older than 1825 days, so this deletes
-# nothing today.
-duplicacy_keep_policy: "-keep 0:3650 -keep 30:1825"
-duplicacy_backup_oncalendar: "Wed *-*-* 02:30:00"
-duplicacy_prune_oncalendar: "Sun *-*-01..07 05:00:00"
-duplicacy_timers_enabled: true
+
+# --- rclone / glacier ------------------------------------------------------
+
+# Off-site cold copy in S3 Glacier Deep Archive. See roles/server/tasks/rclone.yml.
+rclone_version: v1.76.0
+rclone_bin: /usr/local/bin/rclone
+rclone_config: /root/.config/rclone/rclone.conf
+# From the vault (see the shadowing note under dynamic dns):
+#   rclone_s3_bucket, rclone_s3_region,
+#   rclone_s3_access_key_id, rclone_s3_secret_access_key,
+#   rclone_crypt_password  - the only key to the data; keep an offline copy
+
+glacier_script: /usr/local/sbin/glacier-backup.sh
+glacier_src_mount: /mnt/ncloud
+glacier_jobs:
+  - { src: /mnt/ncloud/owncloud, dest: nextcloud, prune: true }
+  # DB dumps were never in the B2 backup; without them a restore loses shares,
+  # tags and metadata. ~50 small files a year. Not pruned: the local rotation
+  # keeps only 8 weeks, so this is the only long history of the database.
+  - { src: /mnt/backups/mysql, dest: mysql, prune: false }
+# Ported from /root/.duplicacy/filters (2026-11-11). rclone syntax: leading /
+# anchors at the data root; "dir/**" excludes a directory's contents, a pattern
+# without /** matches files only. Per-user paths are identifying -> vault, as
+# glacier_vault_excludes (list).
+# Deliberately NOT carried over from duplicacy:
+#   appdata*  - only previews are excluded; the rest holds the instance signing
+#               keypair (identityproof), avatars and theming, which do not regenerate
+#   .ocdata   - excluding it makes a restored data dir refuse to start
+#   oc*       - too broad (would catch any user whose name starts with "oc");
+#               replaced by the four explicit Nextcloud entries below
+glacier_excludes:
+  # Nextcloud code: reinstall the same version instead. Each upgrade replaces
+  # thousands of these files, which would also trip glacier_prune_max.
+  - "/3rdparty/**"
+  - "/apps*/**"
+  - "/core/**"
+  - "/dist/**"
+  - "/themes/**"
+  - "/updater*/**"
+  - "/ocs/**"
+  - "/ocs-provider/**"
+  - "/ocm-provider/**"
+  - "/occ"
+  - "/composer*"
+  - "/package*"
+  - "/.htaccess"
+  - "/lib/**"
+  - "/resources/**"
+  - "/custom_apps/**"     # app-store apps; reinstalled from the store
+  - "/LICENSES/**"
+  - "/.reuse/**"
+  - "/.user.ini"
+  - "/AUTHORS"
+  - "/COPYING"
+  - "/index.html"
+  - "/robots.txt"
+  - "/console.php"
+  - "/cron.php"
+  - "/index.php"
+  - "/public.php"
+  - "/remote.php"
+  - "/status.php"
+  # version.php is kept on purpose: it names the exact release to reinstall.
+  # Regenerable or transient
+  - "/.duplicacy/**"      # leftover duplicacy dir in the data root
+  - "/*.lock"
+  - "/appdata_*/preview/**"
+  - "/cache*/**"
+  - "/.locks*/**"
+  - "/files_external*/**"
+  - "/*/cache/**"
+  - "/*/uploads/**"
+  # Per-user version history and trash bin: Nextcloud expires them itself, so
+  # backing them up just feeds the prune.
+  - "/*/files_versions/**"
+  - "/*/files_trashbin/**"
+  # Logs: rewritten constantly, so each run would re-upload them.
+  - "/audit*"
+  - "/*.log"
+glacier_transfers: 4
+glacier_checkers: 8
+# rclone --bwlimit syntax, e.g. "08:00,4M 23:00,off" to keep daytime upload
+# usable. Empty = unlimited.
+glacier_bwlimit: ""
+glacier_stats_interval: 15m
+# Thu: clear of the Tue sqldump and Sun mirror.
+glacier_oncalendar: "Thu *-*-* 02:30:00"
+glacier_timer_enabled: false
+# Prune deletes a bucket file only when it was uploaded >= min_age days ago (so
+# the 180-day Deep Archive minimum is paid) AND has been missing locally for
+# >= grace days. More than prune_max candidates in one run aborts the prune.
+glacier_prune_min_age_days: 181
+glacier_prune_grace_days: 60
+glacier_prune_max: 2000
+glacier_state_dir: /var/lib/glacier-backup

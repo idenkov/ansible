@@ -1,0 +1,24 @@
+# {{ ansible_managed }}
+# Managed by roles/server/tasks/rclone.yml - edits here are overwritten.
+
+# Plain S3. storage_class makes every upload DEEP_ARCHIVE directly, so the
+# bucket needs no transition lifecycle rule (which would bill per object).
+[glacier]
+type = s3
+provider = AWS
+env_auth = false
+access_key_id = {{ rclone_s3_access_key_id }}
+secret_access_key = {{ rclone_s3_secret_access_key }}
+region = {{ rclone_s3_region }}
+storage_class = DEEP_ARCHIVE
+# The IAM user is scoped to one existing bucket and may not create buckets.
+no_check_bucket = true
+
+# Encrypted view of the whole bucket. Losing rclone_crypt_password makes every
+# object in it unreadable. No password2: rclone's built-in salt is used.
+[glacier-crypt]
+type = crypt
+remote = glacier:{{ rclone_s3_bucket }}
+filename_encryption = standard
+directory_name_encryption = true
+password = {{ rclone_crypt_obscured }}

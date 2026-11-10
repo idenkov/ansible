@@ -1,0 +1,183 @@
+---
+# rclone for the off-site cold copy in S3 Glacier Deep Archive.
+#
+#   glacier:        plain S3, every upload lands as DEEP_ARCHIVE
+#   glacier-crypt:  crypt layered on glacier:<bucket>, encrypts contents
+#                   and names. Use this one for anything real.
+#
+# Only installs the binary and writes the config; no timer yet.
+
+- name: Check the installed rclone version
+  command: "{{ rclone_bin }} version"
+  register: rclone_installed
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Install rclone {{ rclone_version }}
+  when: rclone_version not in (rclone_installed.stdout_lines | default([''], true) | first)
+  block:
+    # Ubuntu's apt rclone lags years behind, so take the upstream build and
+    # verify it against upstream's checksum list.
+    - name: Download the rclone release
+      become: true
+      get_url:
+        url: "https://downloads.rclone.org/{{ rclone_version }}/rclone-{{ rclone_version }}-linux-amd64.zip"
+        dest: "/tmp/rclone-{{ rclone_version }}-linux-amd64.zip"
+        checksum: "sha256:https://downloads.rclone.org/{{ rclone_version }}/SHA256SUMS"
+        mode: '0644'
+
+    - name: Unpack the rclone release
+      become: true
+      unarchive:
+        src: "/tmp/rclone-{{ rclone_version }}-linux-amd64.zip"
+        dest: /tmp
+        remote_src: true
+
+    - name: Install the rclone binary
+      become: true
+      copy:
+        src: "/tmp/rclone-{{ rclone_version }}-linux-amd64/rclone"
+        dest: "{{ rclone_bin }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Remove the rclone download
+      become: true
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/tmp/rclone-{{ rclone_version }}-linux-amd64.zip"
+        - "/tmp/rclone-{{ rclone_version }}-linux-amd64"
+
+- name: Configure the rclone remotes
+  when: rclone_crypt_password is defined
+  block:
+    - name: Create the rclone config directory
+      become: true
+      file:
+        path: "{{ rclone_config | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    # The crypt password has to be stored "obscured" (reversible, fixed key -
+    # not real protection; the file being 0600 root is). Obscuring uses a random
+    # IV, so re-obscuring every run would rewrite the file each time. Reuse the
+    # existing obscured value whenever it still reveals to the vault password.
+    - name: Read the current crypt password from the rclone config
+      become: true
+      shell: >
+        test -f {{ rclone_config }} &&
+        awk '/^\[glacier-crypt\]/{s=1;next} /^\[/{s=0} s && $1=="password"{print $3}' {{ rclone_config }} || true
+      register: rclone_cur_obscured
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: Reveal the current crypt password
+      become: true
+      command: "{{ rclone_bin }} reveal {{ rclone_cur_obscured.stdout }}"
+      register: rclone_cur_plain
+      when: rclone_cur_obscured.stdout | length > 0
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: Obscure the vault crypt password
+      become: true
+      # stdin, so the plain password never shows up in the process list
+      command: "{{ rclone_bin }} obscure -"
+      args:
+        stdin: "{{ rclone_crypt_password }}"
+      register: rclone_new_obscured
+      when: (rclone_cur_plain.stdout | default('')) != rclone_crypt_password
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: Install the rclone config
+      become: true
+      template:
+        src: "files/rclone.conf.j2"
+        dest: "{{ rclone_config }}"
+        owner: root
+        group: root
+        mode: '0600'
+      vars:
+        rclone_crypt_obscured: >-
+          {{ rclone_new_obscured.stdout
+             if (rclone_new_obscured.stdout | default('')) | length > 0
+             else rclone_cur_obscured.stdout }}
+      no_log: true
+
+# --- weekly copy to Glacier Deep Archive ------------------------------------
+
+- name: Install the glacier backup script
+  become: true
+  template:
+    src: "files/glacier-backup.sh.j2"
+    dest: "{{ glacier_script }}"
+    owner: root
+    group: root
+    mode: '0750'
+
+- name: Install the glacier backup service unit
+  become: true
+  copy:
+    dest: /etc/systemd/system/glacier-backup.service
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=rclone copy of Nextcloud data to S3 Glacier Deep Archive
+      After=network-online.target {{ glacier_src_mount | regex_replace('^/', '') | regex_replace('/', '-') }}.mount
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart={{ glacier_script }}
+      # The first run uploads ~1.2 TB and takes days.
+      TimeoutStartSec=infinity
+      StandardInput=null
+      Nice=15
+      IOSchedulingClass=idle
+  notify: Reload systemd
+
+- name: Install the glacier backup timer unit
+  become: true
+  copy:
+    dest: /etc/systemd/system/glacier-backup.timer
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Weekly copy of Nextcloud data to S3 Glacier Deep Archive
+
+      [Timer]
+      OnCalendar={{ glacier_oncalendar }}
+      Persistent=true
+      RandomizedDelaySec=20m
+
+      [Install]
+      WantedBy=timers.target
+  notify: Reload systemd
+
+# Off until the first full upload has been run by hand
+# (systemctl start glacier-backup.service). A Persistent timer firing mid-seed
+# would just hit the lock, but keep the seed an explicit act.
+- name: Enable the glacier backup timer
+  become: true
+  systemd:
+    name: glacier-backup.timer
+    enabled: "{{ glacier_timer_enabled }}"
+    state: "{{ 'started' if glacier_timer_enabled else 'stopped' }}"
+    daemon_reload: true
+  when: not ansible_check_mode
