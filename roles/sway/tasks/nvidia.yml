@@ -22,6 +22,15 @@
     mode: 0644
   notify: Update grub
 
+# Older drivers (Debian's nvidia-suspend-common) save VRAM via these systemd units.
+# Newer ones (NVIDIA CUDA repo, 6xx) do it in-kernel (NVreg_UseKernelSuspendNotifiers)
+# and don't ship the units; installing nvidia-suspend-common there conflicts with
+# nvidia-driver. So only enable them when present.
+- name: Check for NVIDIA suspend/resume units
+  stat:
+    path: /usr/lib/systemd/system/nvidia-suspend.service
+  register: nvidia_suspend_unit
+
 - name: Enable NVIDIA suspend/resume services
   systemd:
     name: "{{ item }}"
@@ -30,6 +39,7 @@
     - nvidia-suspend
     - nvidia-resume
     - nvidia-hibernate
+  when: nvidia_suspend_unit.stat.exists
 
 - name: Add "Sway (NVIDIA)" login session
   copy:
